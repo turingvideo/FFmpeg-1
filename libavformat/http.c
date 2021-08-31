@@ -20,6 +20,7 @@
  */
 
 #include "config.h"
+#include <signal.h>
 
 #if CONFIG_ZLIB
 #include <zlib.h>
@@ -178,6 +179,8 @@ static int http_connect(URLContext *h, const char *path, const char *local_path,
                         const char *proxyauth, int *new_location);
 static int http_read_header(URLContext *h, int *new_location);
 static int http_shutdown(URLContext *h, int flags);
+static int process_line(URLContext *h, char *line, int line_count,
+                        int *new_location);
 
 void ff_http_init_auth_state(URLContext *dest, const URLContext *src)
 {
@@ -375,18 +378,13 @@ fail:
 }
 int ff_http_get_shutdown_status(URLContext *h)
 {
-    int ret = 0;
-    HTTPContext *s = h->priv_data;
+    /* this function and http_shutdown() were in contention fighting each other
+     * about who would read the HTTP headers from the server.  so here we have
+     * removed reading the headers, and let http_shutdown() do it.
+     * 	- eric 8/30/2021
+     */
 
-    /* flush the receive buffer when it is write only mode */
-    char buf[1024];
-    int read_ret;
-    read_ret = ffurl_read(s->hd, buf, sizeof(buf));
-    if (read_ret < 0) {
-        ret = read_ret;
-    }
-
-    return ret;
+    return 0;
 }
 
 int ff_http_do_new_request(URLContext *h, const char *uri) {
@@ -1725,22 +1723,47 @@ static int http_shutdown(URLContext *h, int flags)
     int ret = 0;
     char footer[] = "0\r\n\r\n";
     HTTPContext *s = h->priv_data;
+    char buf[1024];
+    int read_ret;
+    char *line = NULL;
+    int new_location = 0;
 
     /* signal end of chunked encoding if used */
     if (((flags & AVIO_FLAG_WRITE) && s->chunked_post) ||
         ((flags & AVIO_FLAG_READ) && s->chunked_post && s->listen)) {
         ret = ffurl_write(s->hd, footer, sizeof(footer) - 1);
         ret = ret > 0 ? 0 : ret;
-        /* flush the receive buffer when it is write only mode */
-        if (!(flags & AVIO_FLAG_READ)) {
-            char buf[1024];
-            int read_ret;
-            s->hd->flags |= AVIO_FLAG_NONBLOCK;
-            read_ret = ffurl_read(s->hd, buf, sizeof(buf));
-            s->hd->flags &= ~AVIO_FLAG_NONBLOCK;
-            if (read_ret < 0 && read_ret != AVERROR(EAGAIN)) {
-                av_log(h, AV_LOG_ERROR, "URL read error: %s\n", av_err2str(read_ret));
-                ret = read_ret;
+
+        /* we find ourselves here when a chunked file has finished uploading,
+         * except for the trailing 0\r\n\r\n signaling "no more chunks".  we
+         * read HTTP readers from the server, if they are available.  if they
+         * are not available, then we continue on, and read them after the next
+         * chunked file finishes on this socket.
+         *
+         * the intention is to give the server some way to let the client
+         * (this ffmpeg instance) know it can shutdown.
+         *
+         * 	- eric 8/30/2021
+         */
+
+        memset(buf, 0, 1024);
+        s->hd->flags |= AVIO_FLAG_NONBLOCK;
+        read_ret = ffurl_read(s->hd, buf, sizeof(buf));
+        s->hd->flags &= ~AVIO_FLAG_NONBLOCK;
+        if (read_ret < 0 && read_ret != AVERROR(EAGAIN)) {
+            av_log(h, AV_LOG_ERROR, "URL read error: %s\n", av_err2str(read_ret));
+            ret = read_ret;
+        } else if (read_ret > 0) {
+            line = strtok(buf, "\r\n");
+            while (line != NULL) {
+                line = strtok(NULL, "\r\n");
+                if (line != NULL) {
+                    process_line(h, line, 0, &new_location);
+                    if (s->http_code == 500) {
+                        av_log(h, AV_LOG_INFO, "exiting because server returned HTTP %d\n", s->http_code);
+                        raise(SIGTERM);
+                    }
+                }
             }
         }
         s->end_chunked_post = 1;
