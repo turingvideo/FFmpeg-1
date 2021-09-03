@@ -383,6 +383,9 @@ void av_log_default_callback(void* ptr, int level, const char* fmt, va_list vl)
         count = 0;
     }
     strcpy(prev, line);
+
+    snprintf(line, sizeof(line), "[%d] ", getpid());
+    fputs(line, stderr);
     sanitize(part[0].str);
     colored_fputs(type[0], 0, part[0].str);
     sanitize(part[1].str);
