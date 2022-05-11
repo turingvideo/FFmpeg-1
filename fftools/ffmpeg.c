@@ -2054,7 +2054,7 @@ static void do_streamcopy(InputStream *ist, OutputStream *ost, const AVPacket *p
     }
 
     if (of->recording_time != INT64_MAX &&
-        ist->pts >= of->recording_time + start_time) {
+        ist->pts > of->recording_time + start_time) {  //这里防止ffmpeg4.4及以上版本因最后一帧从这里退出不写文件而造成文件录制时长变短问题
         close_output_stream(ost);
         return;
     }
