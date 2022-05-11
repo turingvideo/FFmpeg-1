@@ -32,7 +32,6 @@
 #include "libavutil/pixdesc.h"
 #include "libavutil/rational.h"
 #include "libavutil/samplefmt.h"
-#include "libavutil/thread.h"
 
 #define FF_INTERNAL_FIELDS 1
 #include "framequeue.h"
@@ -43,10 +42,6 @@
 #include "formats.h"
 #include "framepool.h"
 #include "internal.h"
-#include "version.h"
-
-#include "libavutil/ffversion.h"
-const char av_filter_ffversion[] = "FFmpeg version " FFMPEG_VERSION;
 
 static void tlog_ref(void *ctx, AVFrame *ref, int end)
 {
@@ -73,23 +68,6 @@ static void tlog_ref(void *ctx, AVFrame *ref, int end)
     }
 
     ff_tlog(ctx, "]%s", end ? "\n" : "");
-}
-
-unsigned avfilter_version(void)
-{
-    av_assert0(LIBAVFILTER_VERSION_MICRO >= 100);
-    return LIBAVFILTER_VERSION_INT;
-}
-
-const char *avfilter_configuration(void)
-{
-    return FFMPEG_CONFIGURATION;
-}
-
-const char *avfilter_license(void)
-{
-#define LICENSE_PREFIX "libavfilter license: "
-    return &LICENSE_PREFIX FFMPEG_LICENSE[sizeof(LICENSE_PREFIX) - 1];
 }
 
 void ff_command_queue_pop(AVFilterContext *filter)
@@ -862,16 +840,17 @@ static int process_options(AVFilterContext *ctx, AVDictionary **options,
                 return ret;
             }
         } else {
-            av_dict_set(options, key, value, 0);
-            if ((ret = av_opt_set(ctx->priv, key, value, AV_OPT_SEARCH_CHILDREN)) < 0) {
-                if (!av_opt_find(ctx->priv, key, NULL, 0, AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ)) {
-                    if (ret == AVERROR_OPTION_NOT_FOUND)
-                        av_log(ctx, AV_LOG_ERROR, "Option '%s' not found\n", key);
-                    av_free(value);
-                    av_free(parsed_key);
-                    return ret;
-                }
+            o = av_opt_find(ctx->priv, key, NULL, 0,
+                            AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ);
+            if (!o) {
+                av_log(ctx, AV_LOG_ERROR, "Option '%s' not found\n", key);
+                av_free(value);
+                av_free(parsed_key);
+                return AVERROR_OPTION_NOT_FOUND;
             }
+            av_dict_set(options, key, value,
+                        (o->type == AV_OPT_TYPE_FLAGS &&
+                         (value[0] == '-' || value[0] == '+')) ? AV_DICT_APPEND : 0);
         }
 
         av_free(value);

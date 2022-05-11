@@ -347,6 +347,8 @@ extern const FFCodec ff_v408_decoder;
 extern const FFCodec ff_v410_encoder;
 extern const FFCodec ff_v410_decoder;
 extern const FFCodec ff_vb_decoder;
+extern const FFCodec ff_vbn_encoder;
+extern const FFCodec ff_vbn_decoder;
 extern const FFCodec ff_vble_decoder;
 extern const FFCodec ff_vc1_decoder;
 extern const FFCodec ff_vc1_crystalhd_decoder;
@@ -749,6 +751,8 @@ extern const FFCodec ff_libgsm_ms_encoder;
 extern const FFCodec ff_libgsm_ms_decoder;
 extern const FFCodec ff_libilbc_encoder;
 extern const FFCodec ff_libilbc_decoder;
+extern const FFCodec ff_libjxl_decoder;
+extern const FFCodec ff_libjxl_encoder;
 extern const FFCodec ff_libmp3lame_encoder;
 extern const FFCodec ff_libopencore_amrnb_encoder;
 extern const FFCodec ff_libopencore_amrnb_decoder;
@@ -882,10 +886,11 @@ const AVCodec *av_codec_iterate(void **opaque)
 
     ff_thread_once(&av_codec_static_init, av_codec_init_static);
 
-    if (c)
+    if (c) {
         *opaque = (void*)(i + 1);
-
-    return &c->p;
+        return &c->p;
+    }
+    return NULL;
 }
 
 static enum AVCodecID remap_deprecated_codec_id(enum AVCodecID id)
