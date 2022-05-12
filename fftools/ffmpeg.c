@@ -1893,7 +1893,7 @@ static void do_streamcopy(InputStream *ist, OutputStream *ost, const AVPacket *p
     }
 
     if (of->recording_time != INT64_MAX &&
-        ist->pts >= of->recording_time + start_time) {
+        ist->pts > of->recording_time + start_time) {
         close_output_stream(ost);
         return;
     }

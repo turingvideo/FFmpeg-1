@@ -110,6 +110,7 @@ enum {
     FLV_CODECID_H264    = 7,
     FLV_CODECID_REALH263= 8,
     FLV_CODECID_MPEG4   = 9,
+    FLV_CODECID_HEVC    = 12,//hevc:add enum 12,rtmp not support HEVC(h265),so need add codeid,universal use 12 as hevc code id
 };
 
 enum {
