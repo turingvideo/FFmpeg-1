@@ -5179,6 +5179,8 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         distance++;
         if (av_sat_add64(dts, sample_duration) != dts + (uint64_t)sample_duration)
             return AVERROR_INVALIDDATA;
+        if (!sample_size)
+            return AVERROR_INVALIDDATA;
         dts += sample_duration;
         offset += sample_size;
         sc->data_size += sample_size;
@@ -6797,7 +6799,10 @@ static int mov_read_dfla(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
     avio_rb24(pb); /* Flags */
 
-    avio_read(pb, buf, sizeof(buf));
+    if (avio_read(pb, buf, sizeof(buf)) != sizeof(buf)) {
+        av_log(c->fc, AV_LOG_ERROR, "failed to read FLAC metadata block header\n");
+        return pb->error < 0 ? pb->error : AVERROR_INVALIDDATA;
+    }
     flac_parse_block_header(buf, &last, &type, &size);
 
     if (type != FLAC_METADATA_TYPE_STREAMINFO || size != FLAC_STREAMINFO_SIZE) {
@@ -6819,9 +6824,6 @@ static int cenc_scheme_decrypt(MOVContext *c, MOVStreamContext *sc, AVEncryption
 {
     int i, ret;
     int bytes_of_protected_data;
-    int partially_encrypted_block_size;
-    uint8_t *partially_encrypted_block;
-    uint8_t block[16];
 
     if (!sc->cenc.aes_ctr) {
         /* initialize the cipher */
@@ -6844,8 +6846,6 @@ static int cenc_scheme_decrypt(MOVContext *c, MOVStreamContext *sc, AVEncryption
         return 0;
     }
 
-    partially_encrypted_block_size = 0;
-
     for (i = 0; i < sample->subsample_count; i++) {
         if (sample->subsamples[i].bytes_of_clear_data + sample->subsamples[i].bytes_of_protected_data > size) {
             av_log(c->fc, AV_LOG_ERROR, "subsample size exceeds the packet size left\n");
@@ -6858,28 +6858,8 @@ static int cenc_scheme_decrypt(MOVContext *c, MOVStreamContext *sc, AVEncryption
 
         /* decrypt the encrypted bytes */
 
-        if (partially_encrypted_block_size) {
-            memcpy(block, partially_encrypted_block, partially_encrypted_block_size);
-            memcpy(block+partially_encrypted_block_size, input, 16-partially_encrypted_block_size);
-            av_aes_ctr_crypt(sc->cenc.aes_ctr, block, block, 16);
-            memcpy(partially_encrypted_block, block, partially_encrypted_block_size);
-            memcpy(input, block+partially_encrypted_block_size, 16-partially_encrypted_block_size);
-            input += 16-partially_encrypted_block_size;
-            size -= 16-partially_encrypted_block_size;
-            bytes_of_protected_data = sample->subsamples[i].bytes_of_protected_data - (16-partially_encrypted_block_size);
-        } else {
-            bytes_of_protected_data = sample->subsamples[i].bytes_of_protected_data;
-        }
-
-        if (i < sample->subsample_count-1) {
-            int num_of_encrypted_blocks = bytes_of_protected_data/16;
-            partially_encrypted_block_size = bytes_of_protected_data%16;
-            if (partially_encrypted_block_size)
-                partially_encrypted_block = input + 16*num_of_encrypted_blocks;
-            av_aes_ctr_crypt(sc->cenc.aes_ctr, input, input, 16*num_of_encrypted_blocks);
-        } else {
-            av_aes_ctr_crypt(sc->cenc.aes_ctr, input, input, bytes_of_protected_data);
-        }
+        bytes_of_protected_data = sample->subsamples[i].bytes_of_protected_data;
+        av_aes_ctr_crypt(sc->cenc.aes_ctr, input, input, bytes_of_protected_data);
 
         input += bytes_of_protected_data;
         size -= bytes_of_protected_data;
