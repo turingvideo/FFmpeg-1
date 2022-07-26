@@ -24,6 +24,7 @@ jobs:
         with:
           repository: "turingvideo/fdk-aac"
           tag: "v2.0.2.2"
+          token: ${{ secrets.GITHUB_TOKEN }}
           fileName: "fdk-aac-x64-v2.0.2.2.tar.gz"
 
       - name: extract dependency
