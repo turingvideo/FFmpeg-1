@@ -1,0 +1,96 @@
+name: Build Release Packages
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  RELEASE_FILE_X64: ffmpeg-x64-${{ github.ref_name }}.tar.gz
+
+jobs:
+  build:
+    name: Build and Publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: download dependency
+        uses: dsaltares/fetch-gh-release-asset@master
+        with:
+          repo: 'turingvideo/fdk-aac'
+          version: 'tags/v2.0.2.2'
+          file: 'fdk-aac-x64-v2.0.2.2.tar.gz'
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: extract dependency
+        run: tar -xzvf ./fdk-aac-x64-v2.0.2.2.tar.gz
+
+      - name: configure ffmpeg
+        run: "./configure --pkg-config=pkg-config \
+              --enable-small \
+              --disable-shared \
+              --enable-static \
+              --disable-runtime-cpudetect \
+              --disable-swscale-alpha \
+              --disable-autodetect \
+              --disable-ffplay \
+              --disable-ffprobe \
+              --disable-doc \
+              --disable-htmlpages \
+              --disable-manpages \
+              --disable-podpages \
+              --disable-txtpages \
+              --enable-libfdk-aac --enable-nonfree \
+              --enable-avcodec \
+              --enable-avformat \
+              --enable-avfilter \
+              --enable-pthreads \
+              --enable-network \
+              --disable-avdevice \
+              --disable-swscale \
+              --disable-postproc \
+              --enable-protocols \
+              --disable-everything \
+              --enable-filter=aresample \
+              --enable-decoder=h264 \
+              --enable-decoder=h265 \
+              --enable-decoder=pcm_alaw \
+              --enable-decoder=pcm_mulaw \
+              --enable-decoder=hevc \
+              --enable-encoder=aac \
+              --enable-parser=h264 \
+              --enable-parser=h265 \
+              --enable-parser=hevc \
+              --enable-muxer=mp4 \
+              --enable-muxer=flv \
+              --enable-muxer=mpegts \
+              --enable-muxer=rtsp \
+              --enable-muxer=rtp \
+              --enable-muxer=hevc \
+              --enable-demuxer=mp4 \
+              --enable-demuxer=flv \
+              --enable-demuxer=mpegts \
+              --enable-demuxer=rtsp \
+              --enable-demuxer=rtp \
+              --enable-demuxer=hevc \
+              --enable-bsf=extract_extradata \
+              --extra-libs=-lm \
+              --extra-ldflags=-L./deps/x64/lib \
+              --extra-cflags=-I./deps/x64/include"
+
+      - name: build ffmpeg
+        run: make
+
+      - name: Archive
+        run: tar -czvf ${{env.RELEASE_FILE_X64}} ffmpeg
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{ github.workspace }}/${{env.RELEASE_FILE_X64}}
