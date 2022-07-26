@@ -19,8 +19,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
 
-      - name:
-      - uses: robinraju/release-downloader@v1.4
+      - name: download dependency
+        uses: robinraju/release-downloader@v1.4
         with:
           repository: "turingvideo/fdk-aac"
           tag: "v2.0.2.2"
