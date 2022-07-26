@@ -19,13 +19,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
 
-      - name: download dependency
-        uses: dsaltares/fetch-gh-release-asset@master
+      - name:
+      - uses: robinraju/release-downloader@v1.4
         with:
-          repo: 'turingvideo/fdk-aac'
-          version: 'tags/v2.0.2.2'
-          file: 'fdk-aac-x64-v2.0.2.2.tar.gz'
-          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: "turingvideo/fdk-aac"
+          tag: "v2.0.2.2"
+          fileName: "fdk-aac-x64-v2.0.2.2.tar.gz"
 
       - name: extract dependency
         run: tar -xzvf ./fdk-aac-x64-v2.0.2.2.tar.gz
