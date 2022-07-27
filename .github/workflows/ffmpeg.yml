@@ -19,6 +19,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
 
+      - name: install dependency packages
+        run: apt install -y yasm
+
       - name: download dependency
         uses: robinraju/release-downloader@v1.4
         with:
