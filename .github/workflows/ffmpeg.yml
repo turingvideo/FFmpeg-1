@@ -2,10 +2,7 @@ name: Build Release Packages
 
 on:
   push:
-    branches: [ master ]
     tags: [ 'v*.*.*' ]
-  pull_request:
-    branches: [ master ]
 
 env:
   RELEASE_FILE_X64: ffmpeg-x64-${{ github.ref_name }}.tar.gz
