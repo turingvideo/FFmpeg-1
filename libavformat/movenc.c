@@ -1760,7 +1760,7 @@ static unsigned int mov_find_codec_tag(AVFormatContext *s, MOVTrack *track)
         if (!av_match_ext(s->url, "m4a") &&
             !av_match_ext(s->url, "m4v") &&
             !av_match_ext(s->url, "m4b"))
-            av_log(s, AV_LOG_WARNING, "Warning, extension is not .m4a nor .m4v "
+            av_log(s, AV_LOG_WARNING, "Warning! Extension is not .m4a nor .m4v "
                 "Quicktime/Ipod might not play the file\n");
         tag = track->par->codec_tag;
     }
