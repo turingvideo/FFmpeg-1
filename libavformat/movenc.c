@@ -1187,7 +1187,7 @@ static int mov_write_audio_tag(AVFormatContext* s, AVIOContext* pb, MOVMuxContex
     int ret = 0;
 
     if (track->mode == MODE_MOV) {
-        if (track->timescale > UINT16_MAX || !track->par->channels) {
+        if (track->timescale > UINT16_MAX || !track->par->ch_layout.nb_channels) {
             if (mov_get_lpcm_flags(track->par->codec_id))
                 tag = AV_RL32("lpcm");
             version = 2;
@@ -1223,7 +1223,7 @@ static int mov_write_audio_tag(AVFormatContext* s, AVIOContext* pb, MOVMuxContex
         avio_wb32(pb, 0x00010000);
         avio_wb32(pb, 72);
         avio_wb64(pb, av_double2int(track->par->sample_rate));
-        avio_wb32(pb, track->par->channels);
+        avio_wb32(pb, track->par->ch_layout.nb_channels);
         avio_wb32(pb, 0x7F000000);
         avio_wb32(pb, av_get_bits_per_sample(track->par->codec_id));
         avio_wb32(pb, mov_get_lpcm_flags(track->par->codec_id));
@@ -1231,7 +1231,7 @@ static int mov_write_audio_tag(AVFormatContext* s, AVIOContext* pb, MOVMuxContex
         avio_wb32(pb, get_samples_per_packet(track));
     } else {
         if (track->mode == MODE_MOV) {
-            avio_wb16(pb, track->par->channels);
+            avio_wb16(pb, track->par->ch_layout.nb_channels);
             if (track->par->codec_id == AV_CODEC_ID_PCM_U8 ||
                 track->par->codec_id == AV_CODEC_ID_PCM_S8)
                 avio_wb16(pb, 8); /* bits per sample */
@@ -1242,8 +1242,8 @@ static int mov_write_audio_tag(AVFormatContext* s, AVIOContext* pb, MOVMuxContex
             avio_wb16(pb, track->audio_vbr ? -2 : 0); /* compression ID */
         }
         else { /* reserved for mp4/3gp */
-            avio_wb16(pb, track->par->channels > 0 ?
-                track->par->channels : 1);
+            avio_wb16(pb, track->par->ch_layout.nb_channels > 0 ?
+                track->par->ch_layout.nb_channels : 1);
             track->par->bits_per_coded_sample = av_get_bits_per_sample(track->par->codec_id);
             avio_wb16(pb, track->par->bits_per_coded_sample > 0 ?
                 track->par->bits_per_coded_sample : 16);
@@ -1261,7 +1261,7 @@ static int mov_write_audio_tag(AVFormatContext* s, AVIOContext* pb, MOVMuxContex
             avio_wb32(pb, 1); /*  must be 1 for  uncompressed formats */
         else
             avio_wb32(pb, track->par->frame_size); /* Samples per packet */
-        avio_wb32(pb, track->sample_size / track->par->channels); /* Bytes per packet */
+        avio_wb32(pb, track->sample_size / track->par->ch_layout.nb_channels); /* Bytes per packet */
         avio_wb32(pb, track->sample_size); /* Bytes per frame */
         avio_wb32(pb, 2); /* Bytes per sample */
     }
