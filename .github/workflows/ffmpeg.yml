@@ -19,9 +19,6 @@ jobs:
       - name: install dependency packages
         run: sudo apt install -y yasm
 
-      - name: download dependency
-        uses: robinraju/release-downloader@v1.4
-
       - name: configure ffmpeg
         run: "./configure --pkg-config=pkg-config \
               --enable-small \
