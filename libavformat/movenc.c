@@ -1241,14 +1241,7 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
                 avio_wb16(pb, 16);
             avio_wb16(pb, track->audio_vbr ? -2 : 0); /* compression ID */
         } else { /* reserved for mp4/3gp */
-            if (track->par->codec_id == AV_CODEC_ID_FLAC ||
-                track->par->codec_id == AV_CODEC_ID_ALAC ||
-                track->par->codec_id == AV_CODEC_ID_OPUS) {
-                avio_wb16(pb, track->par->ch_layout.nb_channels);
-            } else {
-                avio_wb16(pb, track->par->ch_layout.nb_channels > 0 ?
-                    track->par->channels : 1);
-            }
+            avio_wb16(pb, track->par->ch_layout.nb_channels > 0 ? track->par->channels : 2);
             
             if (track->par->codec_id == AV_CODEC_ID_FLAC ||
                 track->par->codec_id == AV_CODEC_ID_ALAC) {
