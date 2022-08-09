@@ -7720,10 +7720,10 @@ static const AVCodecTag codec_mp4_tags[] = {
     { AV_CODEC_ID_MOV_TEXT,        MKTAG('t', 'x', '3', 'g') },
     { AV_CODEC_ID_BIN_DATA,        MKTAG('g', 'p', 'm', 'd') },
     { AV_CODEC_ID_MPEGH_3D_AUDIO,  MKTAG('m', 'h', 'm', '1') },
+    { AV_CODEC_ID_PCM_ALAW,        MKTAG('a', 'l', 'a', 'w') }, // add pcm alaw
+    { AV_CODEC_ID_PCM_MULAW,       MKTAG('u', 'l', 'a', 'w') }, // add pcm ulaw
     { AV_CODEC_ID_TTML,            MOV_MP4_TTML_TAG      },
     { AV_CODEC_ID_TTML,            MOV_ISMV_TTML_TAG     },
-    { AV_CODEC_ID_PCM_ALAW,        MKTAG('a','l','a','w')    },
-    { AV_CODEC_ID_PCM_MULAW,       MKTAG('u','l','a','w')    },
     { AV_CODEC_ID_NONE,               0 },
 };
 #if CONFIG_MP4_MUXER || CONFIG_PSP_MUXER
