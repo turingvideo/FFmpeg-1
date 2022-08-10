@@ -1,5 +1,5 @@
 #!/bin/sh
-./configure ---pkg-config=pkg-config \
+./configure --pkg-config=pkg-config \
           --enable-small \
           --disable-shared \
           --enable-static \
