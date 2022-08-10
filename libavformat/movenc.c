@@ -1243,11 +1243,14 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
         } else { /* reserved for mp4/3gp */
             if (track->par->codec_id == AV_CODEC_ID_FLAC ||
                 track->par->codec_id == AV_CODEC_ID_ALAC ||
-                track->par->codec_id == AV_CODEC_ID_OPUS) {
+                track->par->codec_id == AV_CODEC_ID_OPUS ||
+                track->par->codec_id == AV_CODEC_ID_PCM_ALAW ||
+                track->par->codec_id == AV_CODEC_ID_PCM_MULAW) {
                 avio_wb16(pb, track->par->ch_layout.nb_channels);
             } else {
                 avio_wb16(pb, 2);
             }
+            
             if (track->par->codec_id == AV_CODEC_ID_FLAC ||
                 track->par->codec_id == AV_CODEC_ID_ALAC) {
                 avio_wb16(pb, track->par->bits_per_raw_sample);
@@ -7717,8 +7720,10 @@ static const AVCodecTag codec_mp4_tags[] = {
     { AV_CODEC_ID_MOV_TEXT,        MKTAG('t', 'x', '3', 'g') },
     { AV_CODEC_ID_BIN_DATA,        MKTAG('g', 'p', 'm', 'd') },
     { AV_CODEC_ID_MPEGH_3D_AUDIO,  MKTAG('m', 'h', 'm', '1') },
-    { AV_CODEC_ID_TTML,            MOV_MP4_TTML_TAG          },
-    { AV_CODEC_ID_TTML,            MOV_ISMV_TTML_TAG         },
+    { AV_CODEC_ID_PCM_ALAW,        MKTAG('a', 'l', 'a', 'w') }, // add pcm alaw
+    { AV_CODEC_ID_PCM_MULAW,       MKTAG('u', 'l', 'a', 'w') }, // add pcm ulaw
+    { AV_CODEC_ID_TTML,            MOV_MP4_TTML_TAG      },
+    { AV_CODEC_ID_TTML,            MOV_ISMV_TTML_TAG     },
     { AV_CODEC_ID_NONE,               0 },
 };
 #if CONFIG_MP4_MUXER || CONFIG_PSP_MUXER
