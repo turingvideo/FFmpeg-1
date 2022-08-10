@@ -27,13 +27,11 @@
           --enable-protocol=rtmp \
           --enable-filter=aresample \
           --enable-decoder=h264 \
-          --enable-decoder=h265 \
           --enable-decoder=pcm_alaw \
           --enable-decoder=pcm_mulaw \
           --enable-decoder=hevc \
           --enable-encoder=aac \
           --enable-parser=h264 \
-          --enable-parser=h265 \
           --enable-parser=hevc \
           --enable-muxer=mp4 \
           --enable-muxer=flv \
@@ -41,7 +39,7 @@
           --enable-muxer=rtsp \
           --enable-muxer=rtp \
           --enable-muxer=hevc \
-          --enable-demuxer=mp4 \
+          --enable-demuxer=mov \
           --enable-demuxer=flv \
           --enable-demuxer=mpegts \
           --enable-demuxer=rtsp \
