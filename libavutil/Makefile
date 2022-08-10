@@ -91,8 +91,8 @@ HEADERS = adler32.h                                                     \
           tea.h                                                         \
           tx.h                                                          \
           film_grain_params.h                                           \
-	      libm.h                                                        \
-	      getenv_utf8.h                                                 \
+	  libm.h                                                        \
+	  getenv_utf8.h                                                 \
           thread.h                                                      \
           internal.h                                                    \
 
