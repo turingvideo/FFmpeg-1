@@ -20,7 +20,7 @@ jobs:
         run: sudo apt install -y yasm
 
       - name: configure ffmpeg
-        run: ./config.sh
+        run: chmod +x ./config.sh && ./config.sh
 
       - name: build ffmpeg
         run: make
