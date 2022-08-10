@@ -1179,7 +1179,7 @@ static int mov_write_btrt_tag(AVIOContext *pb, MOVTrack *track)
     return update_size(pb, pos);
 }
 
-static int mov_write_audio_tag(AVFormatContext* s, AVIOContext* pb, MOVMuxContext* mov, MOVTrack* track)
+static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContext *mov, MOVTrack *track)
 {
     int64_t pos = avio_tell(pb);
     int version = 0;
@@ -1192,10 +1192,10 @@ static int mov_write_audio_tag(AVFormatContext* s, AVIOContext* pb, MOVMuxContex
                 tag = AV_RL32("lpcm");
             version = 2;
         } else if (track->audio_vbr || mov_pcm_le_gt16(track->par->codec_id) ||
-            mov_pcm_be_gt16(track->par->codec_id) ||
-            track->par->codec_id == AV_CODEC_ID_ADPCM_MS ||
-            track->par->codec_id == AV_CODEC_ID_ADPCM_IMA_WAV ||
-            track->par->codec_id == AV_CODEC_ID_QDM2) {
+                   mov_pcm_be_gt16(track->par->codec_id) ||
+                   track->par->codec_id == AV_CODEC_ID_ADPCM_MS ||
+                   track->par->codec_id == AV_CODEC_ID_ADPCM_IMA_WAV ||
+                   track->par->codec_id == AV_CODEC_ID_QDM2) {
             version = 1;
         }
     }
@@ -1240,19 +1240,37 @@ static int mov_write_audio_tag(AVFormatContext* s, AVIOContext* pb, MOVMuxContex
             else
                 avio_wb16(pb, 16);
             avio_wb16(pb, track->audio_vbr ? -2 : 0); /* compression ID */
-        }
-        else { /* reserved for mp4/3gp */
-            avio_wb16(pb, track->par->ch_layout.nb_channels > 0 ?
-                track->par->ch_layout.nb_channels : 1);
-            track->par->bits_per_coded_sample = av_get_bits_per_sample(track->par->codec_id);
-            avio_wb16(pb, track->par->bits_per_coded_sample > 0 ?
-                track->par->bits_per_coded_sample : 16);
+        } else { /* reserved for mp4/3gp */
+            if (track->par->codec_id == AV_CODEC_ID_FLAC ||
+                track->par->codec_id == AV_CODEC_ID_ALAC ||
+                track->par->codec_id == AV_CODEC_ID_OPUS ||
+                track->par->codec_id == AV_CODEC_ID_PCM_ALAW ||
+                track->par->codec_id == AV_CODEC_ID_PCM_MULAW) {
+                avio_wb16(pb, track->par->ch_layout.nb_channels);
+            } else {
+                avio_wb16(pb, 2);
+            }
+            
+            if (track->par->codec_id == AV_CODEC_ID_FLAC ||
+                track->par->codec_id == AV_CODEC_ID_ALAC) {
+                avio_wb16(pb, track->par->bits_per_raw_sample);
+            } else {
+                avio_wb16(pb, 16);
+            }
             avio_wb16(pb, 0);
         }
+
         avio_wb16(pb, 0); /* packet size (= 0) */
-        avio_wb16(pb, track->par->sample_rate <= UINT16_MAX ?
-            track->par->sample_rate : 0);
-        avio_wb16(pb, 0); /* Reserved */
+        if (track->par->codec_id == AV_CODEC_ID_OPUS)
+            avio_wb16(pb, 48000);
+        else if (track->par->codec_id == AV_CODEC_ID_TRUEHD)
+            avio_wb32(pb, track->par->sample_rate);
+        else
+            avio_wb16(pb, track->par->sample_rate <= UINT16_MAX ?
+                          track->par->sample_rate : 0);
+
+        if (track->par->codec_id != AV_CODEC_ID_TRUEHD)
+            avio_wb16(pb, 0); /* Reserved */
     }
 
     if (version == 1) { /* SoundDescription V1 extended info */
@@ -1267,44 +1285,57 @@ static int mov_write_audio_tag(AVFormatContext* s, AVIOContext* pb, MOVMuxContex
     }
 
     if (track->mode == MODE_MOV &&
-        (track->par->codec_id == AV_CODEC_ID_AAC ||
-            track->par->codec_id == AV_CODEC_ID_AC3 ||
-            track->par->codec_id == AV_CODEC_ID_EAC3 ||
-            track->par->codec_id == AV_CODEC_ID_AMR_NB ||
-            track->par->codec_id == AV_CODEC_ID_ALAC ||
-            track->par->codec_id == AV_CODEC_ID_ADPCM_MS ||
-            track->par->codec_id == AV_CODEC_ID_ADPCM_IMA_WAV ||
-            track->par->codec_id == AV_CODEC_ID_QDM2 ||
-            (mov_pcm_le_gt16(track->par->codec_id) && version == 1) ||
-            (mov_pcm_be_gt16(track->par->codec_id) && version == 1)))
-        mov_write_wave_tag(s, pb, track);
-    else if (track->tag == MKTAG('m', 'p', '4', 'a'))
-        mov_write_esds_tag(pb, track);
+        (track->par->codec_id == AV_CODEC_ID_AAC           ||
+         track->par->codec_id == AV_CODEC_ID_AC3           ||
+         track->par->codec_id == AV_CODEC_ID_EAC3          ||
+         track->par->codec_id == AV_CODEC_ID_AMR_NB        ||
+         track->par->codec_id == AV_CODEC_ID_ALAC          ||
+         track->par->codec_id == AV_CODEC_ID_ADPCM_MS      ||
+         track->par->codec_id == AV_CODEC_ID_ADPCM_IMA_WAV ||
+         track->par->codec_id == AV_CODEC_ID_QDM2          ||
+         (mov_pcm_le_gt16(track->par->codec_id) && version==1) ||
+         (mov_pcm_be_gt16(track->par->codec_id) && version==1)))
+        ret = mov_write_wave_tag(s, pb, track);
+    else if (track->tag == MKTAG('m','p','4','a'))
+        ret = mov_write_esds_tag(pb, track);
     else if (track->par->codec_id == AV_CODEC_ID_AMR_NB)
-        mov_write_amr_tag(pb, track);
+        ret = mov_write_amr_tag(pb, track);
     else if (track->par->codec_id == AV_CODEC_ID_AC3)
-        mov_write_ac3_tag(s, pb, track);
+        ret = mov_write_ac3_tag(s, pb, track);
     else if (track->par->codec_id == AV_CODEC_ID_EAC3)
-        mov_write_eac3_tag(s, pb, track);
+        ret = mov_write_eac3_tag(s, pb, track);
     else if (track->par->codec_id == AV_CODEC_ID_ALAC)
-        mov_write_extradata_tag(pb, track);
+        ret = mov_write_extradata_tag(pb, track);
     else if (track->par->codec_id == AV_CODEC_ID_WMAPRO)
-        mov_write_wfex_tag(s, pb, track);
+        ret = mov_write_wfex_tag(s, pb, track);
     else if (track->par->codec_id == AV_CODEC_ID_FLAC)
-        mov_write_dfla_tag(pb, track);
+        ret = mov_write_dfla_tag(pb, track);
     else if (track->par->codec_id == AV_CODEC_ID_OPUS)
-        mov_write_dops_tag(s, pb, track);
+        ret = mov_write_dops_tag(s, pb, track);
+    else if (track->par->codec_id == AV_CODEC_ID_TRUEHD)
+        ret = mov_write_dmlp_tag(s, pb, track);
     else if (track->vos_len > 0)
-        mov_write_glbl_tag(pb, track);
+        ret = mov_write_glbl_tag(pb, track);
 
-    if (track->mode == MODE_MOV && track->par->codec_type == AVMEDIA_TYPE_AUDIO)
-        mov_write_chan_tag(s, pb, track);
+    if (ret < 0)
+        return ret;
 
-    if (mov->encryption_scheme != MOV_ENC_NONE) {
-        ff_mov_cenc_write_sinf_tag(track, pb, mov->encryption_kid);
+    if (track->mode == MODE_MOV && track->par->codec_type == AVMEDIA_TYPE_AUDIO
+            && ((ret = mov_write_chan_tag(s, pb, track)) < 0)) {
+        return ret;
     }
 
-    return update_size(pb, pos);
+    if (mov->encryption_scheme != MOV_ENC_NONE
+            && ((ret = ff_mov_cenc_write_sinf_tag(track, pb, mov->encryption_kid)) < 0)) {
+        return ret;
+    }
+
+    if (mov->write_btrt &&
+            ((ret = mov_write_btrt_tag(pb, track)) < 0))
+        return ret;
+
+    ret = update_size(pb, pos);
+    return ret;
 }
 
 static int mov_write_d263_tag(AVIOContext *pb)
@@ -1750,30 +1781,21 @@ static unsigned int validate_codec_tag(const AVCodecTag *const *tags,
 
 static unsigned int mov_find_codec_tag(AVFormatContext *s, MOVTrack *track)
 {
-    int tag;
-    if (track->mode == MODE_MP4 || track->mode == MODE_PSP)
-        tag = track->par->codec_tag;
-    else if (track->mode == MODE_ISM) {
-        tag = track->par->codec_tag;
-    }
-    else if (track->mode == MODE_IPOD) {
+    if (is_cover_image(track->st))
+        return ff_codec_get_tag(codec_cover_image_tags, track->par->codec_id);
+
+    if (track->mode == MODE_IPOD)
         if (!av_match_ext(s->url, "m4a") &&
             !av_match_ext(s->url, "m4v") &&
             !av_match_ext(s->url, "m4b"))
-            av_log(s, AV_LOG_WARNING, "Warning! Extension is not .m4a nor .m4v "
-                "Quicktime/Ipod might not play the file\n");
-        tag = track->par->codec_tag;
-    }
-    else if (track->mode & MODE_3GP)
-        tag = track->par->codec_tag;
-    else if (track->mode == MODE_F4V)
-        tag = track->par->codec_tag;
+            av_log(s, AV_LOG_WARNING, "Warning, extension is not .m4a nor .m4v "
+                   "Quicktime/Ipod might not play the file\n");
 
-    if (tag == 0) {
-        tag = mov_get_codec_tag(s, track);
-    }
-
-    return tag;
+    if (track->mode == MODE_MOV) {
+        return mov_get_codec_tag(s, track);
+    } else
+        return validate_codec_tag(s->oformat->codec_tag, track->par->codec_tag,
+                                  track->par->codec_id);
 }
 
 /** Write uuid atom.
@@ -7698,8 +7720,10 @@ static const AVCodecTag codec_mp4_tags[] = {
     { AV_CODEC_ID_MOV_TEXT,        MKTAG('t', 'x', '3', 'g') },
     { AV_CODEC_ID_BIN_DATA,        MKTAG('g', 'p', 'm', 'd') },
     { AV_CODEC_ID_MPEGH_3D_AUDIO,  MKTAG('m', 'h', 'm', '1') },
-    { AV_CODEC_ID_TTML,            MOV_MP4_TTML_TAG          },
-    { AV_CODEC_ID_TTML,            MOV_ISMV_TTML_TAG         },
+    { AV_CODEC_ID_PCM_ALAW,        MKTAG('a', 'l', 'a', 'w') }, // add pcm alaw
+    { AV_CODEC_ID_PCM_MULAW,       MKTAG('u', 'l', 'a', 'w') }, // add pcm ulaw
+    { AV_CODEC_ID_TTML,            MOV_MP4_TTML_TAG      },
+    { AV_CODEC_ID_TTML,            MOV_ISMV_TTML_TAG     },
     { AV_CODEC_ID_NONE,               0 },
 };
 #if CONFIG_MP4_MUXER || CONFIG_PSP_MUXER
