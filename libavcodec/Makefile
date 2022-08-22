@@ -26,6 +26,7 @@ HEADERS = ac3_parser.h                                                  \
           videotoolbox.h                                                \
           vorbis_parser.h                                               \
           xvmc.h                                                        \
+          mathops.h                                                     \
 
 OBJS = ac3_parser.o                                                     \
        adts_parser.o                                                    \

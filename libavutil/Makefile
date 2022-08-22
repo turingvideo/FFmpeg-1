@@ -79,6 +79,7 @@ HEADERS = adler32.h                                                     \
           stereo3d.h                                                    \
           threadmessage.h                                               \
           time.h                                                        \
+          timer.h                                                       \
           timecode.h                                                    \
           timestamp.h                                                   \
           tree.h                                                        \
@@ -90,6 +91,10 @@ HEADERS = adler32.h                                                     \
           tea.h                                                         \
           tx.h                                                          \
           film_grain_params.h                                           \
+	  libm.h                                                        \
+	  getenv_utf8.h                                                 \
+          thread.h                                                      \
+          internal.h                                                    \
 
 ARCH_HEADERS = bswap.h                                                  \
                intmath.h                                                \
