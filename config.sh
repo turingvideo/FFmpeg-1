@@ -1,10 +1,9 @@
 #!/bin/sh
 ./configure --pkg-config=pkg-config \
           --enable-small \
-          --disable-shared \
           --enable-static \
+          --disable-shared \
           --disable-runtime-cpudetect \
-          --disable-swscale-alpha \
           --disable-autodetect \
           --disable-ffplay \
           --disable-ffprobe \
@@ -19,26 +18,32 @@
           --enable-avfilter \
           --enable-pthreads \
           --enable-network \
+          --enable-swscale \
+          --enable-swscale-alpha \
           --disable-avdevice \
-          --disable-swscale \
           --disable-postproc \
           --disable-everything \
           --enable-protocol=file \
           --enable-protocol=rtmp \
           --enable-filter=aresample \
+          --enable-filter=scale \
           --enable-decoder=h264 \
           --enable-decoder=pcm_alaw \
           --enable-decoder=pcm_mulaw \
           --enable-decoder=hevc \
           --enable-encoder=aac \
+          --enable-encoder=mjpeg \
           --enable-parser=h264 \
           --enable-parser=hevc \
+          --enable-parser=mjpeg \
           --enable-muxer=mp4 \
           --enable-muxer=flv \
           --enable-muxer=mpegts \
           --enable-muxer=rtsp \
           --enable-muxer=rtp \
           --enable-muxer=hevc \
+          --enable-muxer=image2 \
+          --enable-muxer=mjpeg \
           --enable-demuxer=mov \
           --enable-demuxer=flv \
           --enable-demuxer=mpegts \
