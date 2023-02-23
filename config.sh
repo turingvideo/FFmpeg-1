@@ -1,5 +1,15 @@
 #!/bin/sh
-./configure --pkg-config=pkg-config \
+
+if [ -z "$1" ]; then
+  arch=x64
+else
+  arch=$1
+fi
+
+echo arch=$arch
+echo prefix=deps/$arch
+
+./configure --prefix=deps/$arch --pkg-config=pkg-config \
           --enable-small \
           --enable-static \
           --disable-shared \
