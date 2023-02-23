@@ -10,7 +10,7 @@ env:
 jobs:
   build_ubuntu:
     name: Build and Publish
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
 
     steps:
       - name: Checkout
@@ -23,10 +23,10 @@ jobs:
         run: chmod +x ./config.sh && ./config.sh
 
       - name: build ffmpeg
-        run: make
+        run: make & make install
 
       - name: Archive
-        run: tar -czvf ${{env.RELEASE_FILE_X64_UBUNTU}} ffmpeg
+        run: tar -czvf ${{env.RELEASE_FILE_X64_UBUNTU}} deps
 
       - name: Release
         uses: softprops/action-gh-release@v1
