@@ -5,7 +5,8 @@ on:
     tags: [ 'v*.*.*' ]
 
 env:
-  RELEASE_FILE_X64_UBUNTU: ffmpeg-x64-ubuntu-${{ github.ref_name }}.tar.gz
+  RELEASE_FILE_X64_UBUNTU: ffmpeg-x64-ubuntu-${{ github.ref_name }}
+  RELEASE_FILE_X64_UBUNTU_ARCHIVE: ${RELEASE_FILE_X64_UBUNTU}.tar.gz
 
 jobs:
   build_ubuntu:
@@ -26,10 +27,10 @@ jobs:
         run: make & make install
 
       - name: Archive
-        run: tar -czvf ${{env.RELEASE_FILE_X64_UBUNTU}} deps
+        run: move deps RELEASE_FILE_X64_UBUNTU && tar -czvf ${{env.RELEASE_FILE_X64_UBUNTU_ARCHIVE}} RELEASE_FILE_X64_UBUNTU
 
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ${{ github.workspace }}/${{env.RELEASE_FILE_X64_UBUNTU}}
+            ${{ github.workspace }}/${{env.RELEASE_FILE_X64_UBUNTU_ARCHIVE}}
