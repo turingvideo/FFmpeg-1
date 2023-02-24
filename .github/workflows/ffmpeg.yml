@@ -27,7 +27,7 @@ jobs:
         run: make & make install
 
       - name: Archive
-        run: move deps RELEASE_FILE_X64_UBUNTU && tar -czvf ${{env.RELEASE_FILE_X64_UBUNTU_ARCHIVE}} RELEASE_FILE_X64_UBUNTU
+        run: move deps ${RELEASE_FILE_X64_UBUNTU} && tar -czvf ${{env.RELEASE_FILE_X64_UBUNTU_ARCHIVE}} ${RELEASE_FILE_X64_UBUNTU}
 
       - name: Release
         uses: softprops/action-gh-release@v1
