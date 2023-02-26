@@ -33,7 +33,8 @@ echo prefix=deps/$arch
           --disable-avdevice \
           --disable-postproc \
           --disable-everything \
-          --enable-protocols \
+          --enable-protocol=file \
+          --enable-protocol=rtmp \
           --enable-filter=aresample \
           --enable-filter=scale \
           --enable-decoder=h264 \
