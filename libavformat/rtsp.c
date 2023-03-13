@@ -83,6 +83,7 @@
 const AVOption ff_rtsp_options[] = {
     { "initial_pause",  "do not start playing the stream immediately", OFFSET(initial_pause), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DEC },
     FF_RTP_FLAG_OPTS(RTSPState, rtp_muxer_flags),
+    { "rtsp_scale", "set rtsp scale", OFFSET(rtsp_scale), AV_OPT_TYPE_FLOAT, {.dbl = 1.0 }, 0.25, 8.0, DEC},
     { "rtsp_transport", "set RTSP transport protocols", OFFSET(lower_transport_mask), AV_OPT_TYPE_FLAGS, {.i64 = 0}, INT_MIN, INT_MAX, DEC|ENC, "rtsp_transport" }, \
     { "udp", "UDP", 0, AV_OPT_TYPE_CONST, {.i64 = 1 << RTSP_LOWER_TRANSPORT_UDP}, 0, 0, DEC|ENC, "rtsp_transport" }, \
     { "tcp", "TCP", 0, AV_OPT_TYPE_CONST, {.i64 = 1 << RTSP_LOWER_TRANSPORT_TCP}, 0, 0, DEC|ENC, "rtsp_transport" }, \
@@ -1360,6 +1361,7 @@ static int rtsp_send_cmd_with_content_async(AVFormatContext *s,
         av_strlcat(buf, headers, sizeof(buf));
     av_strlcatf(buf, sizeof(buf), "CSeq: %d\r\n", rt->seq);
     av_strlcatf(buf, sizeof(buf), "User-Agent: %s\r\n",  rt->user_agent);
+    av_strlcatf(buf, sizeof(buf), "Scale: %.1f\r\n", rt->rtsp_scale);
     if (rt->session_id[0] != '\0' && (!headers ||
         !strstr(headers, "\nIf-Match:"))) {
         av_strlcatf(buf, sizeof(buf), "Session: %s\r\n", rt->session_id);

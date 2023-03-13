@@ -346,6 +346,11 @@ typedef struct RTSPState {
     uint8_t* recvbuf;
 
     /**
+     * set rtsp scale
+     */
+    float rtsp_scale;
+
+    /**
      * A mask with all requested transport methods
      */
     int lower_transport_mask;
