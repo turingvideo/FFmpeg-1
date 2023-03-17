@@ -181,7 +181,7 @@ int vstats_version = 2;
 int auto_conversion_filters = 1;
 int64_t stats_period = 500000;
 
-
+static int auto_hvc1          = 0;
 static int file_overwrite     = 0;
 static int no_file_overwrite  = 0;
 static int do_psnr            = 0;
@@ -1683,8 +1683,16 @@ static OutputStream *new_output_stream(OptionsContext *o, AVFormatContext *oc, e
         uint32_t tag = strtol(codec_tag, &next, 0);
         if (*next)
             tag = AV_RL32(codec_tag);
-        ost->st->codecpar->codec_tag =
-        ost->enc_ctx->codec_tag = tag;
+
+        av_log(NULL, AV_LOG_INFO, "auto_hvc1 = %d,  tag is %s\n", auto_hvc1, codec_tag);
+        if (!auto_hvc1 || strcmp(codec_tag, "hvc1") || \
+           (input_streams[source_index] && input_streams[source_index]->dec && input_streams[source_index]->dec->id == AV_CODEC_ID_H265)) {
+            av_log(NULL, AV_LOG_INFO, "set origin tag, %s\n", codec_tag);
+            ost->st->codecpar->codec_tag =
+            ost->enc_ctx->codec_tag = tag;
+        } else {
+            av_log(NULL, AV_LOG_INFO, "remove tag, %s\n", codec_tag);
+        }
     }
 
     MATCH_PER_STREAM_OPT(qscale, dbl, qscale, oc, st);
@@ -3720,6 +3728,8 @@ int opt_timelimit(void *optctx, const char *opt, const char *arg)
 const OptionDef options[] = {
     /* main options */
     CMDUTILS_COMMON_OPTIONS
+    { "auto_hvc1",              OPT_BOOL,                            {              &auto_hvc1 },
+      "auto remove hvc1 for none h265 format" },
     { "f",              HAS_ARG | OPT_STRING | OPT_OFFSET |
                         OPT_INPUT | OPT_OUTPUT,                      { .off       = OFFSET(format) },
         "force format", "fmt" },
