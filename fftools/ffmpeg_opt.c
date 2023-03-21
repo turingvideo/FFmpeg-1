@@ -1685,7 +1685,7 @@ static OutputStream *new_output_stream(OptionsContext *o, AVFormatContext *oc, e
             tag = AV_RL32(codec_tag);
 
         av_log(NULL, AV_LOG_INFO, "auto_hvc1 = %d,  tag is %s\n", auto_hvc1, codec_tag);
-        if (!auto_hvc1 || strcmp(codec_tag, "hvc1") || \
+        if (!auto_hvc1 || strncmp(codec_tag, "hvc1", 4) || \
            (input_streams[source_index] && input_streams[source_index]->dec && input_streams[source_index]->dec->id == AV_CODEC_ID_H265)) {
             av_log(NULL, AV_LOG_INFO, "set origin tag, %s\n", codec_tag);
             ost->st->codecpar->codec_tag =
