@@ -22,6 +22,7 @@ echo prefix=deps/$arch
           --disable-manpages \
           --disable-podpages \
           --disable-txtpages \
+          --enable-gpl \
           --enable-nonfree \
           --enable-avcodec \
           --enable-avformat \
@@ -35,8 +36,10 @@ echo prefix=deps/$arch
           --disable-everything \
           --enable-protocol=file \
           --enable-protocol=rtmp \
+          --enable-protocol=concat \
           --enable-filter=aresample \
           --enable-filter=scale \
+          --enable-filter=concat \
           --enable-decoder=h264 \
           --enable-decoder=pcm_alaw \
           --enable-decoder=pcm_mulaw \
@@ -60,4 +63,5 @@ echo prefix=deps/$arch
           --enable-demuxer=rtsp \
           --enable-demuxer=rtp \
           --enable-demuxer=hevc \
+          --enable-demuxer=concat \
           --enable-bsf=extract_extradata
