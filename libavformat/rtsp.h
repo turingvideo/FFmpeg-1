@@ -349,6 +349,11 @@ typedef struct RTSPState {
      * set rtsp scale
      */
     float rtsp_scale;
+    
+    /**
+     * set rtsp playspeed
+     */
+    float vivotek_play_speed;
 
     /**
      * A mask with all requested transport methods
