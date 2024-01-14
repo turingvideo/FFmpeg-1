@@ -562,8 +562,8 @@ static int rtsp_read_play(AVFormatContext *s)
         if (rt->state == RTSP_STATE_PAUSED) {
             cmd[0] = 0;
         } else {
-            if (rt->vivotek_play_speed > 0.0) {
-                snprintf(cmd, sizeof(cmd), "playspeed: %.1f\r\n", rt->vivotek_play_speed);
+            if (s->vivotek_play_speed > 0.0) {
+                snprintf(cmd, sizeof(cmd), "playspeed: %.1f\r\n", s->vivotek_play_speed);
             } else {
                 snprintf(cmd, sizeof(cmd),
                          "Range: npt=%"PRId64".%03"PRId64"-\r\n",
