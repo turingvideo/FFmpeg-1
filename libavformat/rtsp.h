@@ -349,7 +349,7 @@ typedef struct RTSPState {
      * set rtsp scale
      */
     float rtsp_scale;
-    
+
     /**
      * A mask with all requested transport methods
      */
