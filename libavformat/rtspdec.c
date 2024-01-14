@@ -562,13 +562,13 @@ static int rtsp_read_play(AVFormatContext *s)
         if (rt->state == RTSP_STATE_PAUSED) {
             cmd[0] = 0;
         } else {
-            if (s->vivotek_play_speed > 0.0) {
-                snprintf(cmd, sizeof(cmd), "playspeed: %.1f\r\n", s->vivotek_play_speed);
-            } else {
-                snprintf(cmd, sizeof(cmd),
-                         "Range: npt=%"PRId64".%03"PRId64"-\r\n",
-                         rt->seek_timestamp / AV_TIME_BASE,
-                         rt->seek_timestamp / (AV_TIME_BASE / 1000) % 1000);
+            snprintf(cmd, sizeof(cmd),
+                     "Range: npt=%"PRId64".%03"PRId64"-\r\n",
+                     rt->seek_timestamp / AV_TIME_BASE,
+                     rt->seek_timestamp / (AV_TIME_BASE / 1000) % 1000);
+            // is set vivotek camera playback speed
+            if (s->is_support_vivotek_play_speed) {
+                av_strlcatf(cmd, sizeof(cmd), "playspeed: %.1f\r\n", s->vivotek_play_speed);
             }
         }
         ff_rtsp_send_cmd(s, "PLAY", rt->control_uri, cmd, reply, NULL);
