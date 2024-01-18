@@ -567,7 +567,7 @@ static int rtsp_read_play(AVFormatContext *s)
                      rt->seek_timestamp / AV_TIME_BASE,
                      rt->seek_timestamp / (AV_TIME_BASE / 1000) % 1000);
             // is set vivotek camera playback speed
-            if (s->is_support_vivotek_play_speed) {
+            if (s->vivotek_play_speed > 0) {
                 av_strlcatf(cmd, sizeof(cmd), "playspeed: %.1f\r\n", s->vivotek_play_speed);
             }
         }
