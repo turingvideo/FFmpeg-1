@@ -36,6 +36,7 @@
 #include "avio.h"
 #include "demux.h"
 #include "internal.h"
+#include "rtsp.h"
 
 void ff_free_stream(AVStream **pst)
 {
@@ -692,6 +693,28 @@ AVRational av_stream_get_codec_timebase(const AVStream *st)
 {
     // See avformat_transfer_internal_stream_timing_info() TODO.
     return cffstream(st)->avctx->time_base;
+}
+
+int avformat_get_rtsp_cseq(AVFormatContext *fmt_ctx) {
+    if (fmt_ctx && fmt_ctx->priv_data && 0 == strcmp(fmt_ctx->iformat->name, "rtsp")) {
+        RTSPState *rtsp_state = (RTSPState *)fmt_ctx->priv_data; 
+        if(rtsp_state) {
+            return rtsp_state->seq; 
+        }
+    } 
+
+    return -1;
+}
+
+const char *avformat_get_rtsp_session(AVFormatContext *fmt_ctx) {
+    if (fmt_ctx && fmt_ctx->priv_data && 0 == strcmp(fmt_ctx->iformat->name, "rtsp")) {
+        RTSPState *rtsp_state = (RTSPState *)fmt_ctx->priv_data; 
+        if(rtsp_state) {
+            return rtsp_state->session_id ; 
+        }
+    } 
+
+    return NULL;
 }
 
 void avpriv_set_pts_info(AVStream *st, int pts_wrap_bits,
