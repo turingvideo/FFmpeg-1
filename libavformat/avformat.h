@@ -2909,6 +2909,8 @@ int avformat_get_rtsp_cseq(AVFormatContext *fmt_ctx);
 
 const char *avformat_get_rtsp_session(AVFormatContext *fmt_ctx);
 
+int av_rtsp_send_set_parameter(AVFormatContext *s, const char *uri, const char *content);
+
 /**
  * @}
  */

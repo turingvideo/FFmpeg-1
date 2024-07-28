@@ -1719,6 +1719,46 @@ void ff_rtsp_close_connections(AVFormatContext *s)
     ffurl_closep(&rt->rtsp_hd);
 }
 
+int av_rtsp_send_set_parameter(AVFormatContext *s, const char *uri, const char *content) {
+    if (!s || !uri || !content) {
+        av_log(s, AV_LOG_ERROR, "Invalid parameters\n");
+        return AVERROR(EINVAL);
+    }
+    
+    char request[1024];
+    RTSPMessageHeader reply;
+    unsigned char *content_ptr = NULL;
+    int content_length = strlen(content);
+    int cseq = avformat_get_rtsp_cseq(s) + 1;
+    const char* session = avformat_get_rtsp_session(s);
+    
+    snprintf(request, sizeof(request),
+             "CSeq: %d\r\n"
+             "Session: %s\r\n"
+             "Content-Type: text/parameters\r\n"
+             "Content-Length: %d\r\n"
+             "\r\n"
+             "%s",
+             cseq, session, content_length, content);
+    
+    int ret = ff_rtsp_send_cmd(s, "SET_PARAMETER", uri, request, &reply, NULL);
+    if (ret < 0) {
+        av_log(s, AV_LOG_ERROR, "Failed to send SET_PARAMETER request\n");
+        return ret;
+    }
+    
+    av_log(s, AV_LOG_INFO, "Response Status Code: %d\n", reply.status_code);
+    av_log(s, AV_LOG_INFO, "Response Content Type: %s\n", reply.content_type);
+    
+    if (content_ptr) {
+        av_log(s, AV_LOG_INFO, "Response Content:\n%s\n", content_ptr);
+        av_free(content_ptr);
+    }
+    
+    return 0;
+}
+
+
 int ff_rtsp_connect(AVFormatContext *s)
 {
     RTSPState *rt = s->priv_data;
