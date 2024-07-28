@@ -1725,43 +1725,21 @@ int av_rtsp_send_set_parameter(AVFormatContext *s, const char *uri, const char *
         return AVERROR(EINVAL);
     }
     
-    char request[1024];
+    // Init RTSPMessageHeader
     RTSPMessageHeader reply;
+    memset(&reply, 0, sizeof(reply));
     int content_length = strlen(content);
     
-    RTSPState *rtsp_state = (RTSPState *)s->priv_data;
-    if (!rtsp_state) {
-        av_log(s, AV_LOG_ERROR, "Invalid RTSP state\n");
-        return AVERROR(EINVAL);
-    }
-    
-    int cseq = rtsp_state->seq++;
-    const char* session = rtsp_state->session_id;
-    
-    // Init RTSPMessageHeader
-    memset(&reply, 0, sizeof(reply));
-    
-    snprintf(request, sizeof(request),
-             "CSeq: %d\r\n"
-             "Session: %s\r\n"
-             "Content-Type: text/parameters\r\n"
-             "Content-Length: %d\r\n"
-             "\r\n"
-             "%s",
-             cseq, session, content_length, content);
-    
-    int ret = ff_rtsp_send_cmd(s, "SET_PARAMETER", uri, request, &reply, NULL);
+    const char* content_ptr = NULL;
+    int ret = ff_rtsp_send_cmd_with_content(s, "SET_PARAMETER", uri,
+                                  NULL,
+                                  &reply, &content_ptr, content, strlen(content));
     if (ret < 0) {
         av_log(s, AV_LOG_ERROR, "Failed to send SET_PARAMETER request\n");
         return ret;
     }
     
-    av_log(s, AV_LOG_INFO, "Response Status Code: %d\n", reply.status_code);
-    av_log(s, AV_LOG_INFO, "Response Content Type: %s\n", reply.content_type);
-    
-    if (reply.status_code != RTSP_STATUS_OK) {
-        return ff_rtsp_averror(reply.status_code, AVERROR_INVALIDDATA);
-    }
+    av_log(s, AV_LOG_INFO, "Response Status Code: %d, Type: %s\n", reply.status_code, reply.content_type);
 
     return 0;
 }
