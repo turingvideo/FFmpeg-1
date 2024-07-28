@@ -1719,8 +1719,8 @@ void ff_rtsp_close_connections(AVFormatContext *s)
     ffurl_closep(&rt->rtsp_hd);
 }
 
-int av_rtsp_send_set_parameter(AVFormatContext *s, const char *uri, const char *content) {
-    if (!s || !uri || !content) {
+int av_rtsp_send_set_parameter(AVFormatContext *s, const char *uri, const char *headers, const char *content) {
+    if (!s || !uri || !(headers || content)) {
         av_log(s, AV_LOG_ERROR, "Invalid parameters\n");
         return AVERROR(EINVAL);
     }
@@ -1728,12 +1728,13 @@ int av_rtsp_send_set_parameter(AVFormatContext *s, const char *uri, const char *
     // Init RTSPMessageHeader
     RTSPMessageHeader reply;
     memset(&reply, 0, sizeof(reply));
-    int content_length = strlen(content);
-    
-    const char* content_ptr = NULL;
-    int ret = ff_rtsp_send_cmd_with_content(s, "SET_PARAMETER", uri,
-                                  NULL,
-                                  &reply, &content_ptr, content, strlen(content));
+    int ret;
+    if (content && strlen(content) > 0) {
+        ret = ff_rtsp_send_cmd_with_content(s, "SET_PARAMETER", uri, headers, &reply, NULL, content, strlen(content));
+    } else {
+        ret = ff_rtsp_send_cmd(s, "SET_PARAMETER", uri, headers, &reply, NULL);
+    }
+
     if (ret < 0) {
         av_log(s, AV_LOG_ERROR, "Failed to send SET_PARAMETER request\n");
         return ret;
