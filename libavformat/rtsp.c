@@ -1727,10 +1727,19 @@ int av_rtsp_send_set_parameter(AVFormatContext *s, const char *uri, const char *
     
     char request[1024];
     RTSPMessageHeader reply;
-    unsigned char *content_ptr = NULL;
     int content_length = strlen(content);
-    int cseq = avformat_get_rtsp_cseq(s) + 1;
-    const char* session = avformat_get_rtsp_session(s);
+    
+    RTSPState *rtsp_state = (RTSPState *)s->priv_data;
+    if (!rtsp_state) {
+        av_log(s, AV_LOG_ERROR, "Invalid RTSP state\n");
+        return AVERROR(EINVAL);
+    }
+    
+    int cseq = rtsp_state->seq++;
+    const char* session = rtsp_state->session_id;
+    
+    // Init RTSPMessageHeader
+    memset(&reply, 0, sizeof(reply));
     
     snprintf(request, sizeof(request),
              "CSeq: %d\r\n"
@@ -1750,14 +1759,12 @@ int av_rtsp_send_set_parameter(AVFormatContext *s, const char *uri, const char *
     av_log(s, AV_LOG_INFO, "Response Status Code: %d\n", reply.status_code);
     av_log(s, AV_LOG_INFO, "Response Content Type: %s\n", reply.content_type);
     
-    if (content_ptr) {
-        av_log(s, AV_LOG_INFO, "Response Content:\n%s\n", content_ptr);
-        av_free(content_ptr);
+    if (reply.status_code != RTSP_STATUS_OK) {
+        return ff_rtsp_averror(reply.status_code, AVERROR_INVALIDDATA);
     }
-    
+
     return 0;
 }
-
 
 int ff_rtsp_connect(AVFormatContext *s)
 {
