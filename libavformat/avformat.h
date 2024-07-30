@@ -2905,10 +2905,6 @@ int avformat_transfer_internal_stream_timing_info(const AVOutputFormat *ofmt,
  */
 AVRational av_stream_get_codec_timebase(const AVStream *st);
 
-int avformat_get_rtsp_cseq(AVFormatContext *fmt_ctx);
-
-const char *avformat_get_rtsp_session(AVFormatContext *fmt_ctx);
-
 int av_rtsp_send_set_parameter(AVFormatContext *s, const char *uri, const char *headers, const char *content);
 
 /**
