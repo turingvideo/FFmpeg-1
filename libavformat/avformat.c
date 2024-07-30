@@ -36,7 +36,6 @@
 #include "avio.h"
 #include "demux.h"
 #include "internal.h"
-#include "rtsp.h"
 
 void ff_free_stream(AVStream **pst)
 {
