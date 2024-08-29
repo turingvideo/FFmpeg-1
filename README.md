@@ -34,6 +34,23 @@ and in the [wiki](https://trac.ffmpeg.org).
 
 Coding examples are available in the **doc/examples** directory.
 
+### Compilation
+
+Configure parameters for compilation
+```bash
+./config.sh
+```
+
+Compile from source code
+```bash
+make -j$(nproc) 
+```
+
+Package compiled files
+```bash
+tar -czvf {your_package_name} deps
+```
+
 ## License
 
 FFmpeg codebase is mainly LGPL-licensed with optional components licensed under
