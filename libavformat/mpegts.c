@@ -815,6 +815,8 @@ static const StreamType ISO_types[] = {
     { 0xd2, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_AVS2       },
     { 0xd4, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_AVS3       },
     { 0xea, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_VC1        },
+    { 0x95, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_PCM_ALAW },
+    { 0x96, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_PCM_MULAW },
     { 0 },
 };
 
@@ -843,6 +845,8 @@ static const StreamType SCTE_types[] = {
 static const StreamType MISC_types[] = {
     { 0x81, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_AC3 },
     { 0x8a, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_DTS },
+    { 0x95, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_ALAW },
+    { 0x96, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_MULAW },
     { 0 },
 };
 
@@ -858,6 +862,8 @@ static const StreamType HLS_SAMPLE_ENC_types[] = {
 static const StreamType REGD_types[] = {
     { MKTAG('d', 'r', 'a', 'c'), AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_DIRAC },
     { MKTAG('A', 'C', '-', '3'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_AC3   },
+    { MKTAG('A', 'L', 'A', 'W'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_ALAW},
+    { MKTAG('U', 'L', 'A', 'W'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_MULAW},
     { MKTAG('B', 'S', 'S', 'D'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_S302M },
     { MKTAG('D', 'T', 'S', '1'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_DTS   },
     { MKTAG('D', 'T', 'S', '2'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_DTS   },
@@ -884,6 +890,8 @@ static const StreamType DESC_types[] = {
     { 0x7b, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_DTS          },
     { 0x56, AVMEDIA_TYPE_SUBTITLE, AV_CODEC_ID_DVB_TELETEXT },
     { 0x59, AVMEDIA_TYPE_SUBTITLE, AV_CODEC_ID_DVB_SUBTITLE }, /* subtitling descriptor */
+    { 0x95, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_PCM_ALAW },
+    { 0x96, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_PCM_MULAW },
     { 0 },
 };
 
@@ -899,6 +907,10 @@ static void mpegts_find_stream_type(AVStream *st,
                 st->codecpar->codec_type = types->codec_type;
                 st->codecpar->codec_id   = types->codec_id;
                 sti->need_context_update = 1;
+            }
+            if (types->codec_id == AV_CODEC_ID_PCM_MULAW || types->codec_id == AV_CODEC_ID_PCM_ALAW) {
+                st->codecpar->ch_layout.nb_channels = 1;
+                st->codecpar->sample_rate = 8000;
             }
             sti->request_probe = 0;
             return;

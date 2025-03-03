@@ -448,6 +448,12 @@ static int get_m2ts_stream_type(AVFormatContext *s, AVStream *st)
     MpegTSWriteStream *ts_st = st->priv_data;
 
     switch (st->codecpar->codec_id) {
+    case AV_CODEC_ID_PCM_ALAW:
+        stream_type = STREAM_TYPE_AUDIO_PCMU;
+        break;
+    case AV_CODEC_ID_PCM_MULAW:
+        stream_type = STREAM_TYPE_AUDIO_PCMA;
+        break;
     case AV_CODEC_ID_MPEG2VIDEO:
         stream_type = STREAM_TYPE_VIDEO_MPEG2;
         break;
@@ -1441,7 +1447,9 @@ static int get_pes_stream_id(AVFormatContext *s, AVStream *st, int stream_id, in
     } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
                (st->codecpar->codec_id == AV_CODEC_ID_MP2 ||
                 st->codecpar->codec_id == AV_CODEC_ID_MP3 ||
-                st->codecpar->codec_id == AV_CODEC_ID_AAC)) {
+                st->codecpar->codec_id == AV_CODEC_ID_AAC ||
+                st->codecpar->codec_id == AV_CODEC_ID_PCM_ALAW ||
+                st->codecpar->codec_id == AV_CODEC_ID_PCM_MULAW)) {
         return STREAM_ID_AUDIO_STREAM_0;
     } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
                 st->codecpar->codec_id == AV_CODEC_ID_AC3 &&
