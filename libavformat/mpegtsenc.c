@@ -351,6 +351,12 @@ static int get_dvb_stream_type(AVFormatContext *s, AVStream *st)
     int stream_type;
 
     switch (st->codecpar->codec_id) {
+    case AV_CODEC_ID_PCM_ALAW:
+        stream_type = STREAM_TYPE_AUDIO_PCMU;
+        break;
+    case AV_CODEC_ID_PCM_MULAW:
+        stream_type = STREAM_TYPE_AUDIO_PCMA;
+        break;
     case AV_CODEC_ID_MPEG1VIDEO:
     case AV_CODEC_ID_MPEG2VIDEO:
         stream_type = STREAM_TYPE_VIDEO_MPEG2;

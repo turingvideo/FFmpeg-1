@@ -52,6 +52,8 @@
 
 #define MAX_MP4_DESCR_COUNT 16
 
+#define SAMPLE_RATE_G711 8000
+
 #define MOD_UNLIKELY(modulus, dividend, divisor, prev_dividend)                \
     do {                                                                       \
         if ((prev_dividend) == 0 || (dividend) - (prev_dividend) != (divisor)) \
@@ -910,7 +912,7 @@ static void mpegts_find_stream_type(AVStream *st,
             }
             if (types->codec_id == AV_CODEC_ID_PCM_MULAW || types->codec_id == AV_CODEC_ID_PCM_ALAW) {
                 st->codecpar->ch_layout.nb_channels = 1;
-                st->codecpar->sample_rate = 8000;
+                st->codecpar->sample_rate = SAMPLE_RATE_G711;
             }
             sti->request_probe = 0;
             return;
