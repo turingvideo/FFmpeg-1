@@ -560,7 +560,7 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
 
         stream_type = ts->m2ts_mode ? get_m2ts_stream_type(s, st) : get_dvb_stream_type(s, st);
 
-        *q++ = stream_type;
+        *q++ = (uint8_t)stream_type;
         put16(&q, 0xe000 | ts_st->pid);
         desc_length_ptr = q;
         q += 2; /* patched after */
