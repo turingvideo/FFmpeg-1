@@ -10,6 +10,7 @@ fi
 
 echo TARGET_ARCH=$arch
 
+mkdir -p dependency downloads deps
 DEPENDENCY_DIR=dependency
 DOWNLOAD_DIR=downloads
 SCRIPT_DIR=$(realpath "$(dirname "$0")")
