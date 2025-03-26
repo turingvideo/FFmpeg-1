@@ -39,7 +39,7 @@ SRT_CONFIG= -DENABLE_APPS=OFF -DENABLE_STATIC=ON -DENABLE_SHARED=OFF -DUSE_OPENS
 	-DOPENSSL_LIBRARIES=$(LIB_PREFIX)/lib/
 
 wget -c $(SRT_PKG_URL) -P $(DOWNLOAD_DIR) --output-document $(SRT_PKG) && tar -zxvf $(SRT_PKG) -C $(DEPENDENCY_DIR)
-cd $(DEPENDENCY_DIR)/srt-$(SRT_TAG) && cmake . $(SRT_CONFIG) && make -j $(JOBS) && make install
+cd $(DEPENDENCY_DIR)/srt-$(SRT_TAG) && cmake . $(SRT_CONFIG) && make -j$(nproc) && make install
 
 ./configure --prefix=deps/$arch --pkg-config=pkg-config \
           --enable-small \

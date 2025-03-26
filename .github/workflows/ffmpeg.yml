@@ -52,7 +52,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: build sigmaster
-        run: ./build.sh sigmaster
+        run: ./build/build.sh sigmaster
 
       - name: Archive
         run: tar -czvf ${{env.RELEASE_FILE}} deps
