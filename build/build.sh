@@ -20,7 +20,7 @@ if [[ "$TARGET_ARCH" == "sigmaster" ]]; then
 elif [[ "$TARGET_ARCH" == "cv22" ]]; then
   CROSS_COMPILE_MAKE="./build/cv22.mk"
   CMAKE_TOOLCHAIN_FILE="./build/cv22.cmake"
-if [[ "$TARGET_ARCH" == "armv7hf" ]]; then
+elif [[ "$TARGET_ARCH" == "armv7hf" ]]; then
   CROSS_COMPILE_MAKE="./build/armv7hf.mk"
   CMAKE_TOOLCHAIN_FILE="./build/armv7hf.cmake"
 elif [[ "$TARGET_ARCH" == "aarch64" ]]; then
