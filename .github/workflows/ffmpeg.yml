@@ -51,8 +51,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: build sigmaster
-        run: ./build/build.sh sigmaster
+      - name: Build sigmaster
+        run: |
+          docker run -v ${{ github.workspace }}:/host --rm ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.IMAGE }}:${{ env.BUILDER_VERSION }} /bin/sh -c 'cd /host && ./build.sh sigmaster'
 
       - name: Archive
         run: tar -czvf ${{env.RELEASE_FILE}} deps
