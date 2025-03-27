@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 set -e
 
@@ -43,17 +43,16 @@ wget -c $ZLIB_PKG_URL -P $DOWNLOAD_DIR --output-document $ZLIB_PKG
 tar -xzvf $ZLIB_PKG -C $DEPENDENCY_DIR
 cd $DEPENDENCY_DIR/$ZLIB_DIR_NAME && \
 CC=$CC ./configure --static -prefix=$LIB_PREFIX && \
-make -j$(nproc) && make install
+make -j$(nproc) && make install && cd -
 
 echo "begin build openssl"
 OPENSSL_VERSION=openssl-3.0.2
 OPENSSL_PKG_URL=https://www.openssl.org/source/$OPENSSL_VERSION.tar.gz
 OPENSSL_PKG=$DOWNLOAD_DIR/$OPENSSL_VERSION.tar.gz
-
 wget -c $OPENSSL_PKG_URL -P $DOWNLOAD_DIR --output-document $OPENSSL_PKG
 tar -xzvf $OPENSSL_PKG -C $DEPENDENCY_DIR
 cd $DEPENDENCY_DIR/$OPENSSL_VERSION && OPENSSL_CROSS_COMPILE_ARGS_EXTRA=$OPENSSL_CROSS_COMPILE_ARGS_EXTRA CC=$CC ./Configure $TARGET_PLATFORM no-shared --prefix=$LIB_PREFIX \
-		--openssldir=$LIB_PREFIX/openssl --libdir=$LIB_PREFIX/lib --with-zlib-include=$LIB_PREFIX/include --with-zlib-lib=$LIB_PREFIX/lib && make -j$(nproc) && make install
+		--openssldir=$LIB_PREFIX/openssl --libdir=$LIB_PREFIX/lib --with-zlib-include=$LIB_PREFIX/include --with-zlib-lib=$LIB_PREFIX/lib && make -j$(nproc) && make install &&  && cd -
 
 
 echo "begin build srt"
