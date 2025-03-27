@@ -52,7 +52,7 @@ OPENSSL_PKG=$DOWNLOAD_DIR/$OPENSSL_VERSION.tar.gz
 wget -c $OPENSSL_PKG_URL -P $DOWNLOAD_DIR --output-document $OPENSSL_PKG
 tar -xzvf $OPENSSL_PKG -C $DEPENDENCY_DIR
 cd $DEPENDENCY_DIR/$OPENSSL_VERSION && OPENSSL_CROSS_COMPILE_ARGS_EXTRA=$OPENSSL_CROSS_COMPILE_ARGS_EXTRA CC=$CC ./Configure $TARGET_PLATFORM no-shared --prefix=$LIB_PREFIX \
-		--openssldir=$LIB_PREFIX/openssl --libdir=$LIB_PREFIX/lib --with-zlib-include=$LIB_PREFIX/include --with-zlib-lib=$LIB_PREFIX/lib && make -j$(nproc) && make install &&  && cd -
+		--openssldir=$LIB_PREFIX/openssl --libdir=$LIB_PREFIX/lib --with-zlib-include=$LIB_PREFIX/include --with-zlib-lib=$LIB_PREFIX/lib && make -j$(nproc) && make install && cd -
 
 
 echo "begin build srt"
@@ -66,7 +66,7 @@ SRT_CONFIG="-DENABLE_APPS=OFF -DENABLE_STATIC=ON -DENABLE_SHARED=OFF -DUSE_OPENS
 
 wget -c "$SRT_PKG_URL" -P "$DOWNLOAD_DIR" --output-document srt-v$SRT_TAG.tar.gz && tar -zxvf srt-v$SRT_TAG.tar.gz -C $DEPENDENCY_DIR
 
-cd $DEPENDENCY_DIR/srt-$SRT_TAG && cmake . $SRT_CONFIG && make -j$(nproc) && make install
+cd $DEPENDENCY_DIR/srt-$SRT_TAG && cmake . $SRT_CONFIG && make -j$(nproc) && make install && cd -
 
 ./configure --prefix=deps/$arch --pkg-config=pkg-config \
           --enable-small \
