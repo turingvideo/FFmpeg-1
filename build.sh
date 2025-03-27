@@ -18,13 +18,13 @@ LIB_PREFIX=$SCRIPT_DIR/deps/$arch
 
 if [[ "$arch" == "sigmaster" ]]; then
   CROSS_COMPILE_MAKE="$SCRIPT_DIR/build/cross_compile_arm.mk"
-  CMAKE_TOOLCHAIN_FILE="$SCRIPT_DIR/build/ccross_compile_arm.cmake"
+  CMAKE_TOOLCHAIN_FILE="$SCRIPT_DIR/build/cross_compile_arm.cmake"
 elif [[ "$arch" == "cv22" ]]; then
-  CROSS_COMPILE_MAKE="$SCRIPT_DIR/build/ccv22.mk"
-  CMAKE_TOOLCHAIN_FILE="$SCRIPT_DIR/build/ccv22.cmake"
+  CROSS_COMPILE_MAKE="$SCRIPT_DIR/build/cv22.mk"
+  CMAKE_TOOLCHAIN_FILE="$SCRIPT_DIR/build/cv22.cmake"
 elif [[ "$arch" == "armv7hf" ]]; then
-  CROSS_COMPILE_MAKE="$SCRIPT_DIR/build/carmv7hf.mk"
-  CMAKE_TOOLCHAIN_FILE="$SCRIPT_DIR/build/carmv7hf.cmake"
+  CROSS_COMPILE_MAKE="$SCRIPT_DIR/build/armv7hf.mk"
+  CMAKE_TOOLCHAIN_FILE="$SCRIPT_DIR/build/armv7hf.cmake"
 elif [[ "$arch" == "aarch64" ]]; then
   CROSS_COMPILE_MAKE="$SCRIPT_DIR/build/aarch64.mk"
   CMAKE_TOOLCHAIN_FILE="$SCRIPT_DIR/build/aarch64.cmake"
