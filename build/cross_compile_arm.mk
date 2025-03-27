@@ -10,5 +10,6 @@ SIP_CROSS_COMPILE_ARGS=--target=$(CROSS_COMPILE) --host=$(CROSS_COMPILE)
 PCAP_CROSS_COMPILE_ARGS=--target=$(CROSS_COMPILE) --host=$(CROSS_COMPILE)
 OPENSSL_CROSS_COMPILE_ARGS=--cross-compile-prefix=$(CROSS_COMPILE_PREFIX)
 FFMPEG_CROSS_COMPILE_ARGS=--arch=armv7l --target-os=linux --cross-prefix=$(CROSS_COMPILE_PREFIX) --enable-cross-compile
+CMAKE_TOOLCHAIN_FILE=$(PROJECT_DIR)/cross_compile_arm.cmake
 SIP_LIBS_REPLACE_STR=-arm-unknown-linux-gnueabihf
 

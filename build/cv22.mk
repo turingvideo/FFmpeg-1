@@ -10,4 +10,5 @@ SIP_CROSS_COMPILE_ARGS=--target=$(CROSS_COMPILE) --host=$(CROSS_COMPILE)
 PCAP_CROSS_COMPILE_ARGS=--target=$(CROSS_COMPILE) --host=$(CROSS_COMPILE)
 OPENSSL_CROSS_COMPILE_ARGS=--cross-compile-prefix=$(CROSS_COMPILE_PREFIX)
 FFMPEG_CROSS_COMPILE_ARGS=--arch=aarch64 --target-os=linux --cross-prefix=$(CROSS_COMPILE_PREFIX) --enable-cross-compile
+CMAKE_TOOLCHAIN_FILE=$(PROJECT_DIR)/cv22.cmake
 SIP_LIBS_REPLACE_STR=-aarch64-unknown-linux-gnu
