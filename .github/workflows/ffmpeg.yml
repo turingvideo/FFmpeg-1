@@ -5,60 +5,31 @@ on:
     tags: [ 'v*.*.*' ]
 
 env:
-  RELEASE_FILE: ffmpeg-sigmaster-ubuntu-${{ github.ref_name }}.tar.gz
-  REGISTRY: ${{ secrets.HARBOR_US_REGISTRY }}
-  PROJECT_ID: sigmastar
-  IMAGE: sigmastar
-  BUILDER_VERSION: 0.0.3
-  IMAGE_CACHE: ~/image-cache
+  RELEASE_FILE_X64_UBUNTU: ffmpeg-x64-ubuntu-${{ github.ref_name }}.tar.gz
 
 jobs:
-  build:
+  build_ubuntu:
     name: Build and Publish
     runs-on: ubuntu-20.04
 
     steps:
-      - name: Prepare Folders
-        run: mkdir -p ${{ env.IMAGE_CACHE }}
-
-      - name: Image Cache
-        id: image-cache
-        uses: actions/cache@v3
-        with:
-          path: ${{ env.IMAGE_CACHE }}
-          key: ${{ runner.os }}-builder-${{ env.IMAGE }}-${{ env.BUILDER_VERSION }}
-          restore-keys: |
-            ${{ runner.os }}-builder
-
-      - name: Login to Harbor
-        uses: docker/login-action@v1
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.HARBOR_US_CI_USERNAME }}
-          password: ${{ secrets.HARBOR_US_CI_PASSWORD }}
-
-      - name: Pull Builder
-        if: steps.image-cache.outputs.cache-hit != 'true'
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.IMAGE }}:${{ env.BUILDER_VERSION }}
-          docker save -o ${{ env.IMAGE_CACHE }}/builder.tar ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.IMAGE }}:${{ env.BUILDER_VERSION }}
-
-      - name: Restore Builder Cache
-        if: steps.image-cache.outputs.cache-hit == 'true'
-        run: |
-          docker load -i  ${{ env.IMAGE_CACHE }}/builder.tar
-
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v2
 
-      - name: build sigmaster
-        run: ./build/build.sh sigmaster
+      - name: install dependency packages
+        run: sudo apt install -y yasm
+
+      - name: configure ffmpeg
+        run: chmod +x ./config.sh && ./config.sh
+
+      - name: build ffmpeg
+        run: make & make install
 
       - name: Archive
-        run: tar -czvf ${{env.RELEASE_FILE}} deps
+        run: tar -czvf ${{env.RELEASE_FILE_X64_UBUNTU}} deps
 
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ${{ github.workspace }}/${{env.RELEASE_FILE}}
+            ${{ github.workspace }}/${{env.RELEASE_FILE_X64_UBUNTU}}
