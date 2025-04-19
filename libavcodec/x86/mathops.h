@@ -124,7 +124,7 @@ static inline uint32_t NEG_USR32(uint32_t a, int8_t s){
     __asm__ ("shrl %1, %0\n\t"
          : "+r" (a)
          : "ic" ((uint8_t)(-s))
-    );
+	);
     return a;
 }
 
