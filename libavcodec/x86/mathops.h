@@ -113,7 +113,7 @@ __asm__ volatile(\
 // avoid +32 for shift optimization (gcc should do that ...)
 #define NEG_SSR32 NEG_SSR32
 static inline  int32_t NEG_SSR32( int32_t a, int8_t s){
-    __asm__("sar %1, %0\n\t"
+    __asm__("sarl %1, %0\n\t"
             : "+r"(a)
             : "ic"((uint8_t)(-s)));
     return a;
