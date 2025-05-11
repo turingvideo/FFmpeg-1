@@ -169,6 +169,7 @@ int copy_ts           = 0;
 int start_at_zero     = 0;
 int copy_tb           = -1;
 int debug_ts          = 0;
+int jump_time         = 0;
 int exit_on_error     = 0;
 int abort_on_flags    = 0;
 int print_stats       = -1;
@@ -3909,6 +3910,8 @@ const OptionDef options[] = {
                         OPT_OFFSET,                                  { .off = OFFSET(loop) }, "set number of times input stream shall be looped", "loop count" },
     { "debug_ts",       OPT_BOOL | OPT_EXPERT,                       { &debug_ts },
         "print timestamp debugging info" },
+    { "jump_time",       HAS_ARG | OPT_TIME | OPT_EXPERT |
+                         OPT_INPUT | OPT_OUTPUT,                       { &jump_time }, "set jump time for stream recording", "jump time" },
     { "max_error_rate",  HAS_ARG | OPT_FLOAT,                        { &max_error_rate },
         "ratio of decoding errors (0.0: no errors, 1.0: 100% errors) above which ffmpeg returns an error instead of success.", "maximum error rate" },
     { "discard",        OPT_STRING | HAS_ARG | OPT_SPEC |

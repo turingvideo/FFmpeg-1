@@ -2408,7 +2408,7 @@ static int send_filter_eof(InputStream *ist)
 }
 
 /* pkt = NULL means EOF (needed to flush decoder buffers) */
-static int process_input_packet(InputStream *ist, const AVPacket *pkt, int no_eof)
+static int process_input_packet(InputStream *ist, AVPacket *pkt, int no_eof)
 {
     int ret = 0, i;
     int repeating = 0;
@@ -2426,6 +2426,25 @@ static int process_input_packet(InputStream *ist, const AVPacket *pkt, int no_eo
             ist->pts = ist->dts; //unused but better to set it to a value thats not totally wrong
         }
         ist->saw_first_ts = 1;
+    }
+
+    if (jump_time) {
+        if (pkt && pkt->dts != AV_NOPTS_VALUE) {
+            if (ist->last_dts) {
+              int64_t diff = av_rescale_q(pkt->dts - ist->last_dts, ist->st->time_base, AV_TIME_BASE_Q);
+              if (diff > jump_time * AV_TIME_BASE) {
+                ist->dts_jump += pkt->dts - ist->last_dts;
+              }
+            }
+            ist->last_dts = pkt->dts;
+        }
+        if (ist->dts_jump) {
+            pkt->dts -= ist->dts_jump;
+            pkt->pts -= ist->dts_jump;
+        }
+        if (debug_ts) {
+            av_log(NULL, AV_LOG_INFO, "pts %ld, dts %ld, duration %ld, jump %ld\n",  pkt->pts, pkt->dts, pkt->duration, ist->dts_jump);
+        }
     }
 
     if (ist->next_dts == AV_NOPTS_VALUE)
