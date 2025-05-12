@@ -2438,10 +2438,10 @@ static int process_input_packet(InputStream *ist, AVPacket *pkt, int no_eof)
             }
             if (ist->dts_jump) {
                 if (pkt->dts != AV_NOPTS_VALUE) {
-                    pkt->dts += ist->last_duration;
+                    pkt->dts = ist->last_dts + ist->last_duration;
                 }
                 if (pkt->pts != AV_NOPTS_VALUE) {
-                    pkt->pts += ist->last_duration;
+                    pkt->pts = ist->last_dts + ist->last_duration;
                 }
             }
             if (pkt->duration != AV_NOPTS_VALUE) {
