@@ -2440,7 +2440,9 @@ static int process_input_packet(InputStream *ist, AVPacket *pkt, int no_eof)
 
             if (ist->dts_jump) {
                 pkt->dts -= ist->dts_jump;
-                pkt->pts -= ist->dts_jump;
+                if (pkt->pts != AV_NOPTS_VALUE) {
+                  pkt->pts -= ist->dts_jump;
+                }
             }
             if (debug_ts) {
                 av_log(NULL, AV_LOG_INFO, "pts %ld, dts %ld, duration %ld, jump %ld\n",  pkt->pts, pkt->dts, pkt->duration, ist->dts_jump);
