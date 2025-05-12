@@ -2430,20 +2430,24 @@ static int process_input_packet(InputStream *ist, AVPacket *pkt, int no_eof)
 
     if (jump_time) {
         if (pkt && pkt->dts != AV_NOPTS_VALUE) {
-            if (ist->last_dts) {
+            if (!ist->dts_jump && ist->last_dts) {
                 int64_t diff = av_rescale_q(pkt->dts - ist->last_dts, ist->st->time_base, AV_TIME_BASE_Q);
                 if (abs(diff) > jump_time * AV_TIME_BASE) {
-                  ist->dts_jump += pkt->dts - ist->last_dts;
+                    ist->dts_jump = 1;
                 }
+            }
+            if (ist->dts_jump) {
+                if (pkt->dts != AV_NOPTS_VALUE) {
+                    pkt->dts += ist->last_duration;
+                }
+                if (pkt->pts != AV_NOPTS_VALUE) {
+                    pkt->pts += ist->last_duration;
+                }
+            }
+            if (pkt->duration != AV_NOPTS_VALUE) {
+                ist->last_duration = pkt->duration;
             }
             ist->last_dts = pkt->dts;
-
-            if (ist->dts_jump) {
-                pkt->dts -= ist->dts_jump;
-                if (pkt->pts != AV_NOPTS_VALUE) {
-                  pkt->pts -= ist->dts_jump;
-                }
-            }
             if (debug_ts) {
                 av_log(NULL, AV_LOG_INFO, "pts %ld, dts %ld, duration %ld, jump %ld\n",  pkt->pts, pkt->dts, pkt->duration, ist->dts_jump);
             }
