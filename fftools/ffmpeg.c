@@ -2430,7 +2430,7 @@ static int process_input_packet(InputStream *ist, AVPacket *pkt, int no_eof)
 
     if (jump_time) {
         if (pkt && pkt->dts != AV_NOPTS_VALUE) {
-            if (!ist->dts_jump && ist->last_dts) {
+            if (!ist->dts_jump && ist->last_dts && ist->last_dts != AV_NOPTS_VALUE) {
                 int64_t diff = av_rescale_q(pkt->dts - ist->last_dts, ist->st->time_base, AV_TIME_BASE_Q);
                 if (abs(diff) > jump_time * AV_TIME_BASE) {
                     ist->dts_jump = 1;
