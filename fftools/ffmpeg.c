@@ -2428,29 +2428,25 @@ static int process_input_packet(InputStream *ist, AVPacket *pkt, int no_eof)
         ist->saw_first_ts = 1;
     }
 
-    if (jump_time) {
-        if (pkt && pkt->dts != AV_NOPTS_VALUE) {
-            if (!ist->dts_jump && ist->last_dts && ist->last_dts != AV_NOPTS_VALUE) {
-                int64_t diff = av_rescale_q(pkt->dts - ist->last_dts, ist->st->time_base, AV_TIME_BASE_Q);
-                if (abs(diff) > jump_time * AV_TIME_BASE) {
-                    ist->dts_jump = 1;
-                }
+    if (jump_time && pkt) {
+        if (pkt->dts != AV_NOPTS_VALUE && ist->last_dts) {
+            int64_t diff = av_rescale_q(pkt->dts - ist->last_dts, ist->st->time_base, AV_TIME_BASE_Q);
+            if (diff > jump_time * AV_TIME_BASE || diff < -jump_time * AV_TIME_BASE) {
+                ist->dts_jump = 1;
             }
-            if (ist->dts_jump) {
-                if (pkt->dts != AV_NOPTS_VALUE) {
-                    pkt->dts = ist->last_dts + ist->last_duration;
-                }
-                if (pkt->pts != AV_NOPTS_VALUE) {
-                    pkt->pts = ist->last_dts + ist->last_duration;
-                }
-            }
-            if (pkt->duration != AV_NOPTS_VALUE) {
-                ist->last_duration = pkt->duration;
-            }
-            ist->last_dts = pkt->dts;
+        }
+        if (ist->dts_jump) {
+            pkt->dts = ist->last_dts + pkt->duration;
+            pkt->pts = ist->last_pts + pkt->duration;
             if (debug_ts) {
                 av_log(NULL, AV_LOG_INFO, "pts %ld, dts %ld, duration %ld, jump %ld\n",  pkt->pts, pkt->dts, pkt->duration, ist->dts_jump);
             }
+        }
+        if (pkt->dts != AV_NOPTS_VALUE) {
+            ist->last_dts = pkt->dts;
+        }
+        if (pkt->pts != AV_NOPTS_VALUE) {
+            ist->last_pts = pkt->pts;
         }
     }
 

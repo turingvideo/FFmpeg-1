@@ -929,6 +929,9 @@ static void add_input_streams(OptionsContext *o, AVFormatContext *ic)
 
         ist->filter_in_rescale_delta_last = AV_NOPTS_VALUE;
         ist->prev_pkt_pts = AV_NOPTS_VALUE;
+        ist->dts_jump = 0;
+        ist->last_dts = 0;
+        ist->last_pts = 0;
 
         ist->dec_ctx = avcodec_alloc_context3(ist->dec);
         if (!ist->dec_ctx) {
