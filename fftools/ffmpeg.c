@@ -2438,15 +2438,15 @@ static int process_input_packet(InputStream *ist, AVPacket *pkt, int no_eof)
         if (ist->dts_jump) {
             pkt->dts = ist->last_dts + pkt->duration;
             pkt->pts = ist->last_pts + pkt->duration;
-            if (debug_ts) {
-                av_log(NULL, AV_LOG_INFO, "pts %ld, dts %ld, duration %ld, jump %ld\n",  pkt->pts, pkt->dts, pkt->duration, ist->dts_jump);
-            }
         }
         if (pkt->dts != AV_NOPTS_VALUE) {
             ist->last_dts = pkt->dts;
         }
         if (pkt->pts != AV_NOPTS_VALUE) {
             ist->last_pts = pkt->pts;
+        }
+        if (debug_ts) {
+            av_log(NULL, AV_LOG_INFO, "pts %ld, dts %ld, duration %ld, jump %d\n",  pkt->pts, pkt->dts, pkt->duration, ist->dts_jump);
         }
     }
 
