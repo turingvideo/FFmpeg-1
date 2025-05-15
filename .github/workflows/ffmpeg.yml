@@ -23,7 +23,7 @@ jobs:
         run: chmod +x ./config.sh && ./config.sh
 
       - name: build ffmpeg
-        run: make & make install
+        run: make clean && make -j8 & make install
 
       - name: Archive
         run: tar -czvf ${{env.RELEASE_FILE_X64_UBUNTU}} deps
