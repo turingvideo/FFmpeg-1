@@ -328,6 +328,9 @@ typedef struct InputStream {
     int64_t       next_dts;
     int64_t first_dts;       ///< dts of the first packet read for this stream (in AV_TIME_BASE units)
     int64_t       dts;       ///< dts of the last packet read for this stream (in AV_TIME_BASE units)
+    int     dts_jump;
+    int64_t last_dts;
+    int64_t last_pts;
 
     int64_t       next_pts;  ///< synthetic pts for the next decode frame (in AV_TIME_BASE units)
     int64_t       pts;       ///< current pts of the decoded frame  (in AV_TIME_BASE units)
@@ -637,6 +640,7 @@ extern int copy_ts;
 extern int start_at_zero;
 extern int copy_tb;
 extern int debug_ts;
+extern int jump_time;
 extern int exit_on_error;
 extern int abort_on_flags;
 extern int print_stats;
