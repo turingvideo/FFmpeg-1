@@ -3179,8 +3179,10 @@ static const AVOption options[] = {
     {"start_number",  "set first number in the sequence",        OFFSET(start_sequence),AV_OPT_TYPE_INT64,  {.i64 = 0},     0, INT64_MAX, E},
     {"hls_time",      "set segment length",                      OFFSET(time),          AV_OPT_TYPE_DURATION, {.i64 = 2000000}, 0, INT64_MAX, E},
     {"hls_init_time", "set segment length at init list",         OFFSET(init_time),     AV_OPT_TYPE_DURATION, {.i64 = 0},       0, INT64_MAX, E},
+    /* AV_NOPTS_VALUE is the disabled marker, so it is kept outside the accepted range: a
+     * caller asking for that instant would otherwise be silently ignored. */
     {"hls_segment_epoch", "align segment boundaries to absolute times measured from this instant, "
-                          "rather than to the first packet",     OFFSET(segment_epoch), AV_OPT_TYPE_DURATION, {.i64 = AV_NOPTS_VALUE}, INT64_MIN, INT64_MAX, E},
+                          "rather than to the first packet",     OFFSET(segment_epoch), AV_OPT_TYPE_DURATION, {.i64 = AV_NOPTS_VALUE}, AV_NOPTS_VALUE + 1, INT64_MAX, E},
     {"hls_list_size", "set maximum number of playlist entries",  OFFSET(max_nb_segments),    AV_OPT_TYPE_INT,    {.i64 = 5},     0, INT_MAX, E},
     {"hls_delete_threshold", "set number of unreferenced segments to keep before deleting",  OFFSET(hls_delete_threshold),    AV_OPT_TYPE_INT,    {.i64 = 1},     1, INT_MAX, E},
 #if FF_HLS_TS_OPTIONS
