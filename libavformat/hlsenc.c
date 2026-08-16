@@ -138,6 +138,8 @@ typedef struct VariantStream {
     double dpp;           // duration per packet
     int64_t start_pts;
     int64_t end_pts;
+    /* Absolute time of the open segment's first packet, when hls_segment_epoch is in use. */
+    int64_t segment_epoch_start;
     int64_t video_lastpos;
     int64_t video_keyframe_pos;
     int64_t video_keyframe_size;
@@ -198,6 +200,7 @@ typedef struct HLSContext {
 
     int64_t time;          // Set by a private option.
     int64_t init_time;     // Set by a private option.
+    int64_t segment_epoch; // Set by a private option. AV_NOPTS_VALUE when unused.
     int max_nb_segments;   // Set by a private option.
     int hls_delete_threshold; // Set by a private option.
     uint32_t flags;        // enum HLSFlags
@@ -2400,12 +2403,62 @@ static int64_t append_single_file(AVFormatContext *s, VariantStream *vs)
 
     return ret;
 }
+/* Absolute segment boundaries.
+ *
+ * By default a segment ends once hls_time has elapsed since the first packet, so where the
+ * boundaries fall depends on when the muxer happened to start reading. A caller that resumes,
+ * reconnects or repeats a source therefore gets segments covering different spans of it each
+ * time.
+ *
+ * With hls_segment_epoch the boundaries are multiples of hls_time measured from that instant,
+ * so the same source always yields the same segments however much of it this run has seen.
+ * The caller supplies the epoch because only it knows what the timestamps are relative to.
+ */
+static int64_t hls_segment_epoch_pts(const HLSContext *hls, const VariantStream *vs,
+                                     const AVPacket *pkt, AVRational tb)
+{
+    return hls->segment_epoch + av_rescale_q(pkt->pts, tb, AV_TIME_BASE_Q);
+}
+
+/* Rounds towards negative infinity, unlike C division, so an epoch before the zero point
+ * still lands on the boundary below it rather than the one above. */
+static int64_t hls_floor_div(int64_t a, int64_t b)
+{
+    int64_t q = a / b;
+    if (a % b != 0 && (a < 0) != (b < 0))
+        q--;
+    return q;
+}
+
+static int64_t hls_segment_epoch_slot(const HLSContext *hls, int64_t abs_pts)
+{
+    return hls_floor_div(abs_pts, hls->time);
+}
+
+static int hls_segment_epoch_reached(const HLSContext *hls, const VariantStream *vs,
+                                     const AVPacket *pkt, AVRational tb)
+{
+    int64_t abs_pts;
+
+    if (hls->time <= 0 || vs->segment_epoch_start == AV_NOPTS_VALUE)
+        return 0;
+
+    abs_pts = hls_segment_epoch_pts(hls, vs, pkt, tb);
+
+    /* The open segment covers the span its first packet fell in, so it ends once a packet
+     * belongs to a later one. A segment whose first packet arrived part way into a span is
+     * therefore shorter than hls_time rather than overrunning into the next. */
+    return hls_segment_epoch_slot(hls, abs_pts) >
+           hls_segment_epoch_slot(hls, vs->segment_epoch_start);
+}
+
 static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
 {
     HLSContext *hls = s->priv_data;
     AVFormatContext *oc = NULL;
     AVStream *st = s->streams[pkt->stream_index];
     int64_t end_pts = 0;
+    int reached_boundary;
     int is_ref_pkt = 1;
     int ret = 0, can_split = 1, i, j;
     int stream_index = 0;
@@ -2455,11 +2508,18 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
 
     if (vs->start_pts == AV_NOPTS_VALUE) {
         vs->start_pts = pkt->pts;
+        if (hls->segment_epoch != AV_NOPTS_VALUE)
+            vs->segment_epoch_start = hls_segment_epoch_pts(hls, vs, pkt, st->time_base);
         if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
             vs->start_pts_from_audio = 1;
     }
+    /* The run's first segment was opened before any packet had been seen, so it carries the
+     * counter's starting value; renaming it is not possible once written, but the number it
+     * is recorded under can still be the one its content earns. */
     if (vs->start_pts_from_audio && st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && vs->start_pts > pkt->pts) {
         vs->start_pts = pkt->pts;
+        if (hls->segment_epoch != AV_NOPTS_VALUE)
+            vs->segment_epoch_start = hls_segment_epoch_pts(hls, vs, pkt, st->time_base);
         vs->start_pts_from_audio = 0;
     }
 
@@ -2491,8 +2551,12 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
     }
 
     can_split = can_split && (pkt->pts - vs->end_pts > 0);
-    if (vs->packets_written && can_split && av_compare_ts(pkt->pts - vs->start_pts, st->time_base,
-                                                          end_pts, AV_TIME_BASE_Q) >= 0) {
+    if (hls->segment_epoch != AV_NOPTS_VALUE)
+        reached_boundary = hls_segment_epoch_reached(hls, vs, pkt, st->time_base);
+    else
+        reached_boundary = av_compare_ts(pkt->pts - vs->start_pts, st->time_base,
+                                         end_pts, AV_TIME_BASE_Q) >= 0;
+    if (vs->packets_written && can_split && reached_boundary) {
         int64_t new_start_pos;
         int byterange_mode = (hls->flags & HLS_SINGLE_FILE) || (hls->max_seg_size > 0);
 
@@ -2604,6 +2668,13 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             double cur_duration =  (double)(pkt->pts - vs->end_pts) * st->time_base.num / st->time_base.den;
             ret = hls_append_segment(s, hls, vs, cur_duration, vs->start_pos, vs->size);
             vs->end_pts = pkt->pts;
+            if (hls->segment_epoch != AV_NOPTS_VALUE) {
+                vs->segment_epoch_start = hls_segment_epoch_pts(hls, vs, pkt, st->time_base);
+                /* Number the segment for the span it covers rather than counting them, so a
+                 * caller that resumes or repeats a source names the same content the same
+                 * way. hls_append_segment has just advanced the counter; this replaces it. */
+                vs->sequence = hls_segment_epoch_slot(hls, vs->segment_epoch_start);
+            }
             vs->duration = 0;
             if (ret < 0) {
                 av_freep(&old_filename);
@@ -2956,6 +3027,7 @@ static int hls_init(AVFormatContext *s)
         vs->sequence  = hls->start_sequence;
         vs->start_pts = AV_NOPTS_VALUE;
         vs->end_pts   = AV_NOPTS_VALUE;
+        vs->segment_epoch_start = AV_NOPTS_VALUE;
         vs->current_segment_final_filename_fmt[0] = '\0';
         vs->initial_prog_date_time = initial_program_date_time;
 
@@ -3107,6 +3179,8 @@ static const AVOption options[] = {
     {"start_number",  "set first number in the sequence",        OFFSET(start_sequence),AV_OPT_TYPE_INT64,  {.i64 = 0},     0, INT64_MAX, E},
     {"hls_time",      "set segment length",                      OFFSET(time),          AV_OPT_TYPE_DURATION, {.i64 = 2000000}, 0, INT64_MAX, E},
     {"hls_init_time", "set segment length at init list",         OFFSET(init_time),     AV_OPT_TYPE_DURATION, {.i64 = 0},       0, INT64_MAX, E},
+    {"hls_segment_epoch", "align segment boundaries to absolute times measured from this instant, "
+                          "rather than to the first packet",     OFFSET(segment_epoch), AV_OPT_TYPE_DURATION, {.i64 = AV_NOPTS_VALUE}, INT64_MIN, INT64_MAX, E},
     {"hls_list_size", "set maximum number of playlist entries",  OFFSET(max_nb_segments),    AV_OPT_TYPE_INT,    {.i64 = 5},     0, INT_MAX, E},
     {"hls_delete_threshold", "set number of unreferenced segments to keep before deleting",  OFFSET(hls_delete_threshold),    AV_OPT_TYPE_INT,    {.i64 = 1},     1, INT_MAX, E},
 #if FF_HLS_TS_OPTIONS
