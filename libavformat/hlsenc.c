@@ -2463,18 +2463,15 @@ static int hls_segment_epoch_reached(const HLSContext *hls, const VariantStream 
 
 /* The run's first segment is named at write_header, before any packet has been seen, so it
  * carries the counter's starting value rather than the span it turns out to cover. Under
- * fmp4 the file is not opened until the segment closes, so the name can still be corrected
- * once the span is known. Naming schemes that have already committed to a name — a single
- * file, a temporary name to rename over, size-driven splitting, strftime, or a sidecar
- * subtitle stream — are left alone.
+ * fmp4 — the only mode the epoch accepts, enforced in hls_init — the file is not opened
+ * until the segment closes, so the name can still be corrected once the span is known. Every
+ * later segment is named at hls_start with its span already decided.
  */
 static void hls_segment_epoch_rename(HLSContext *hls, VariantStream *vs)
 {
     char *filename = NULL;
 
-    if (hls->segment_type != SEGMENT_TYPE_FMP4 || vs->init_range_length ||
-        hls->max_seg_size > 0 || hls->use_localtime || vs->vtt_basename ||
-        (hls->flags & (HLS_SINGLE_FILE | HLS_TEMP_FILE)))
+    if (vs->init_range_length)
         return;
 
     if (replace_int_data_in_filename(&filename, vs->basename, 'd', vs->segment_slot) < 1) {
@@ -2978,6 +2975,25 @@ static int hls_init(AVFormatContext *s)
             pattern += 2;
     }
 
+    /* Rejected rather than partly honoured: the epoch names each segment for the span it
+     * covers, and every one of these settles on a name before the span is known — the run's
+     * first segment would silently keep the counter's starting value. */
+    if (hls->segment_epoch != AV_NOPTS_VALUE) {
+        if (hls->time <= 0) {
+            av_log(s, AV_LOG_ERROR, "hls_segment_epoch needs a positive hls_time to measure "
+                                    "spans against\n");
+            return AVERROR(EINVAL);
+        }
+        if (hls->segment_type != SEGMENT_TYPE_FMP4 || hls->use_localtime ||
+            hls->max_seg_size > 0 ||
+            (hls->flags & (HLS_SINGLE_FILE | HLS_TEMP_FILE | HLS_SECOND_LEVEL_SEGMENT_INDEX |
+                           HLS_SECOND_LEVEL_SEGMENT_DURATION | HLS_SECOND_LEVEL_SEGMENT_SIZE))) {
+            av_log(s, AV_LOG_ERROR, "hls_segment_epoch only supports fmp4 segments named by "
+                                    "a plain sequence pattern\n");
+            return AVERROR(EINVAL);
+        }
+    }
+
     hls->has_default_key = 0;
     hls->has_video_m3u8 = 0;
     ret = update_variant_stream_info(s);
@@ -3169,6 +3185,12 @@ static int hls_init(AVFormatContext *s)
             p = strrchr(vs->m3u8_name, '.');
             if (p)
                 *p = '\0';
+
+            if (hls->segment_epoch != AV_NOPTS_VALUE) {
+                av_log(s, AV_LOG_ERROR, "hls_segment_epoch does not support subtitle "
+                                        "segments\n");
+                return AVERROR(EINVAL);
+            }
 
             vs->vtt_basename = av_asprintf("%s%s", vs->m3u8_name, vtt_pattern);
             if (!vs->vtt_basename)
