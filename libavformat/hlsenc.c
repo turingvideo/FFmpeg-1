@@ -138,6 +138,12 @@ typedef struct VariantStream {
     double dpp;           // duration per packet
     int64_t start_pts;
     int64_t end_pts;
+    /* Absolute time of the open segment's first packet, when hls_segment_epoch is in use. */
+    int64_t segment_epoch_start;
+    /* The span the open segment covers, which names it under hls_segment_epoch. Kept apart
+     * from sequence, which stays a count of segments so the media sequence, the rolling
+     * window and the encryption IV keep meaning what they do upstream. */
+    int64_t segment_slot;
     int64_t video_lastpos;
     int64_t video_keyframe_pos;
     int64_t video_keyframe_size;
@@ -198,6 +204,7 @@ typedef struct HLSContext {
 
     int64_t time;          // Set by a private option.
     int64_t init_time;     // Set by a private option.
+    int64_t segment_epoch; // Set by a private option. AV_NOPTS_VALUE when unused.
     int max_nb_segments;   // Set by a private option.
     int hls_delete_threshold; // Set by a private option.
     uint32_t flags;        // enum HLSFlags
@@ -1683,6 +1690,9 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
     int use_temp_file = 0;
     char iv_string[KEYSIZE*2 + 1];
     int err = 0;
+    /* Under hls_segment_epoch a segment is named for the span it covers, not for how many
+     * came before it. */
+    int64_t name_number = c->segment_epoch != AV_NOPTS_VALUE ? vs->segment_slot : vs->sequence;
 
     if (c->flags & HLS_SINGLE_FILE) {
         char *new_name = av_strdup(vs->basename);
@@ -1698,7 +1708,7 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
     } else if (c->max_seg_size > 0) {
         char *filename = NULL;
         if (replace_int_data_in_filename(&filename,
-            vs->basename, 'd', vs->sequence) < 1) {
+            vs->basename, 'd', name_number) < 1) {
                 av_freep(&filename);
                 av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s', you can try to use -strftime 1 with it\n", vs->basename);
                 return AVERROR(EINVAL);
@@ -1737,7 +1747,7 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
         } else {
             char *filename = NULL;
             if (replace_int_data_in_filename(&filename,
-                   vs->basename, 'd', vs->sequence) < 1) {
+                   vs->basename, 'd', name_number) < 1) {
                 av_freep(&filename);
                 av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s' you can try to use -strftime 1 with it\n", vs->basename);
                 return AVERROR(EINVAL);
@@ -1747,7 +1757,7 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
         if (vs->vtt_basename) {
             char *filename = NULL;
             if (replace_int_data_in_filename(&filename,
-                vs->vtt_basename, 'd', vs->sequence) < 1) {
+                vs->vtt_basename, 'd', name_number) < 1) {
                 av_freep(&filename);
                 av_log(vtt_oc, AV_LOG_ERROR, "Invalid segment filename template '%s'\n", vs->vtt_basename);
                 return AVERROR(EINVAL);
@@ -2400,12 +2410,93 @@ static int64_t append_single_file(AVFormatContext *s, VariantStream *vs)
 
     return ret;
 }
+/* Absolute segment boundaries.
+ *
+ * By default a segment ends once hls_time has elapsed since the first packet, so where the
+ * boundaries fall depends on when the muxer happened to start reading. A caller that resumes,
+ * reconnects or repeats a source therefore gets segments covering different spans of it each
+ * time.
+ *
+ * With hls_segment_epoch the boundaries are multiples of hls_time measured from that instant,
+ * so the same source always yields the same segments however much of it this run has seen.
+ * The caller supplies the epoch because only it knows what the timestamps are relative to.
+ */
+static int64_t hls_segment_epoch_pts(const HLSContext *hls, const VariantStream *vs,
+                                     const AVPacket *pkt, AVRational tb)
+{
+    /* Saturating: the option accepts the whole int64 range, so a far epoch plus a long
+     * stream can leave it. */
+    return av_sat_add64(hls->segment_epoch, av_rescale_q(pkt->pts, tb, AV_TIME_BASE_Q));
+}
+
+/* Rounds towards negative infinity, unlike C division, so an epoch before the zero point
+ * still lands on the boundary below it rather than the one above. */
+static int64_t hls_floor_div(int64_t a, int64_t b)
+{
+    int64_t q = a / b;
+    if (a % b != 0 && (a < 0) != (b < 0))
+        q--;
+    return q;
+}
+
+static int64_t hls_segment_epoch_slot(const HLSContext *hls, int64_t abs_pts)
+{
+    return hls_floor_div(abs_pts, hls->time);
+}
+
+static int hls_segment_epoch_reached(const HLSContext *hls, const VariantStream *vs,
+                                     const AVPacket *pkt, AVRational tb)
+{
+    int64_t abs_pts;
+
+    if (hls->time <= 0 || vs->segment_epoch_start == AV_NOPTS_VALUE)
+        return 0;
+
+    abs_pts = hls_segment_epoch_pts(hls, vs, pkt, tb);
+
+    /* The open segment covers the span its first packet fell in, so it ends once a packet
+     * belongs to a later one. A segment whose first packet arrived part way into a span is
+     * therefore shorter than hls_time rather than overrunning into the next. */
+    return hls_segment_epoch_slot(hls, abs_pts) >
+           hls_segment_epoch_slot(hls, vs->segment_epoch_start);
+}
+
+/* The run's first segment is named at write_header, before any packet has been seen, so it
+ * carries the counter's starting value rather than the span it turns out to cover. Under
+ * fmp4 — the only mode the epoch accepts, enforced in hls_init — the file is not opened
+ * until the segment closes, so the name can still be corrected once the span is known. Every
+ * later segment is named at hls_start with its span already decided.
+ */
+static void hls_segment_epoch_rename(HLSContext *hls, VariantStream *vs)
+{
+    char *filename = NULL;
+
+    if (vs->init_range_length)
+        return;
+
+    if (replace_int_data_in_filename(&filename, vs->basename, 'd', vs->segment_slot) < 1) {
+        av_freep(&filename);
+        return;
+    }
+    ff_format_set_url(vs->avf, filename);
+}
+
+/* Adopt the span this packet falls in as the open segment's, and name the segment for it. */
+static void hls_segment_epoch_open(HLSContext *hls, VariantStream *vs,
+                                   const AVPacket *pkt, AVRational tb)
+{
+    vs->segment_epoch_start = hls_segment_epoch_pts(hls, vs, pkt, tb);
+    vs->segment_slot = hls_segment_epoch_slot(hls, vs->segment_epoch_start);
+    hls_segment_epoch_rename(hls, vs);
+}
+
 static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
 {
     HLSContext *hls = s->priv_data;
     AVFormatContext *oc = NULL;
     AVStream *st = s->streams[pkt->stream_index];
     int64_t end_pts = 0;
+    int reached_boundary;
     int is_ref_pkt = 1;
     int ret = 0, can_split = 1, i, j;
     int stream_index = 0;
@@ -2455,11 +2546,15 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
 
     if (vs->start_pts == AV_NOPTS_VALUE) {
         vs->start_pts = pkt->pts;
+        if (hls->segment_epoch != AV_NOPTS_VALUE)
+            hls_segment_epoch_open(hls, vs, pkt, st->time_base);
         if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
             vs->start_pts_from_audio = 1;
     }
     if (vs->start_pts_from_audio && st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && vs->start_pts > pkt->pts) {
         vs->start_pts = pkt->pts;
+        if (hls->segment_epoch != AV_NOPTS_VALUE)
+            hls_segment_epoch_open(hls, vs, pkt, st->time_base);
         vs->start_pts_from_audio = 0;
     }
 
@@ -2491,8 +2586,12 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
     }
 
     can_split = can_split && (pkt->pts - vs->end_pts > 0);
-    if (vs->packets_written && can_split && av_compare_ts(pkt->pts - vs->start_pts, st->time_base,
-                                                          end_pts, AV_TIME_BASE_Q) >= 0) {
+    if (hls->segment_epoch != AV_NOPTS_VALUE)
+        reached_boundary = hls_segment_epoch_reached(hls, vs, pkt, st->time_base);
+    else
+        reached_boundary = av_compare_ts(pkt->pts - vs->start_pts, st->time_base,
+                                         end_pts, AV_TIME_BASE_Q) >= 0;
+    if (vs->packets_written && can_split && reached_boundary) {
         int64_t new_start_pos;
         int byterange_mode = (hls->flags & HLS_SINGLE_FILE) || (hls->max_seg_size > 0);
 
@@ -2604,6 +2703,10 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             double cur_duration =  (double)(pkt->pts - vs->end_pts) * st->time_base.num / st->time_base.den;
             ret = hls_append_segment(s, hls, vs, cur_duration, vs->start_pos, vs->size);
             vs->end_pts = pkt->pts;
+            /* Name the next segment for the span it covers rather than counting them, so a
+             * caller that resumes or repeats a source names the same content the same way. */
+            if (hls->segment_epoch != AV_NOPTS_VALUE)
+                hls_segment_epoch_open(hls, vs, pkt, st->time_base);
             vs->duration = 0;
             if (ret < 0) {
                 av_freep(&old_filename);
@@ -2872,6 +2975,35 @@ static int hls_init(AVFormatContext *s)
             pattern += 2;
     }
 
+    /* Rejected rather than partly honoured: the epoch names each segment for the span it
+     * covers, and every one of these settles on a name before the span is known — the run's
+     * first segment would silently keep the counter's starting value. */
+    if (hls->segment_epoch != AV_NOPTS_VALUE) {
+        if (hls->time <= 0) {
+            av_log(s, AV_LOG_ERROR, "hls_segment_epoch needs a positive hls_time to measure "
+                                    "spans against\n");
+            return AVERROR(EINVAL);
+        }
+        if (hls->segment_type != SEGMENT_TYPE_FMP4 || hls->use_localtime ||
+            hls->max_seg_size > 0 ||
+            (hls->flags & (HLS_SINGLE_FILE | HLS_TEMP_FILE | HLS_SECOND_LEVEL_SEGMENT_INDEX |
+                           HLS_SECOND_LEVEL_SEGMENT_DURATION | HLS_SECOND_LEVEL_SEGMENT_SIZE))) {
+            av_log(s, AV_LOG_ERROR, "hls_segment_epoch only supports fmp4 segments named by "
+                                    "a plain sequence pattern\n");
+            return AVERROR(EINVAL);
+        }
+        /* A resumed run picks up in whatever slot the recording has reached, which the parsed
+         * playlist may already name: the segment would be written over the existing file and
+         * listed a second time, and aging the older entry out would delete what just replaced
+         * it. Names that come from a counter cannot collide this way, which is why appending
+         * is only a problem here. */
+        if (hls->flags & HLS_APPEND_LIST) {
+            av_log(s, AV_LOG_ERROR, "hls_segment_epoch cannot append to an existing playlist: "
+                                    "a resumed run lands in a slot it may already name\n");
+            return AVERROR(EINVAL);
+        }
+    }
+
     hls->has_default_key = 0;
     hls->has_video_m3u8 = 0;
     ret = update_variant_stream_info(s);
@@ -2956,6 +3088,8 @@ static int hls_init(AVFormatContext *s)
         vs->sequence  = hls->start_sequence;
         vs->start_pts = AV_NOPTS_VALUE;
         vs->end_pts   = AV_NOPTS_VALUE;
+        vs->segment_epoch_start = AV_NOPTS_VALUE;
+        vs->segment_slot = 0;
         vs->current_segment_final_filename_fmt[0] = '\0';
         vs->initial_prog_date_time = initial_program_date_time;
 
@@ -3062,6 +3196,12 @@ static int hls_init(AVFormatContext *s)
             if (p)
                 *p = '\0';
 
+            if (hls->segment_epoch != AV_NOPTS_VALUE) {
+                av_log(s, AV_LOG_ERROR, "hls_segment_epoch does not support subtitle "
+                                        "segments\n");
+                return AVERROR(EINVAL);
+            }
+
             vs->vtt_basename = av_asprintf("%s%s", vs->m3u8_name, vtt_pattern);
             if (!vs->vtt_basename)
                 return AVERROR(ENOMEM);
@@ -3107,6 +3247,10 @@ static const AVOption options[] = {
     {"start_number",  "set first number in the sequence",        OFFSET(start_sequence),AV_OPT_TYPE_INT64,  {.i64 = 0},     0, INT64_MAX, E},
     {"hls_time",      "set segment length",                      OFFSET(time),          AV_OPT_TYPE_DURATION, {.i64 = 2000000}, 0, INT64_MAX, E},
     {"hls_init_time", "set segment length at init list",         OFFSET(init_time),     AV_OPT_TYPE_DURATION, {.i64 = 0},       0, INT64_MAX, E},
+    /* AV_NOPTS_VALUE is the disabled marker, so it is kept outside the accepted range: a
+     * caller asking for that instant would otherwise be silently ignored. */
+    {"hls_segment_epoch", "align segment boundaries to absolute times measured from this instant, "
+                          "rather than to the first packet",     OFFSET(segment_epoch), AV_OPT_TYPE_DURATION, {.i64 = AV_NOPTS_VALUE}, AV_NOPTS_VALUE + 1, INT64_MAX, E},
     {"hls_list_size", "set maximum number of playlist entries",  OFFSET(max_nb_segments),    AV_OPT_TYPE_INT,    {.i64 = 5},     0, INT_MAX, E},
     {"hls_delete_threshold", "set number of unreferenced segments to keep before deleting",  OFFSET(hls_delete_threshold),    AV_OPT_TYPE_INT,    {.i64 = 1},     1, INT_MAX, E},
 #if FF_HLS_TS_OPTIONS

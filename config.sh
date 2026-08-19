@@ -46,6 +46,7 @@ echo prefix=deps/$arch
           --enable-parser=h264 \
           --enable-parser=hevc \
           --enable-parser=mjpeg \
+          --enable-muxer=hls \
           --enable-muxer=mp4 \
           --enable-muxer=flv \
           --enable-muxer=mpegts \
