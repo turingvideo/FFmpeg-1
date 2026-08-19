@@ -2992,6 +2992,16 @@ static int hls_init(AVFormatContext *s)
                                     "a plain sequence pattern\n");
             return AVERROR(EINVAL);
         }
+        /* A resumed run picks up in whatever slot the recording has reached, which the parsed
+         * playlist may already name: the segment would be written over the existing file and
+         * listed a second time, and aging the older entry out would delete what just replaced
+         * it. Names that come from a counter cannot collide this way, which is why appending
+         * is only a problem here. */
+        if (hls->flags & HLS_APPEND_LIST) {
+            av_log(s, AV_LOG_ERROR, "hls_segment_epoch cannot append to an existing playlist: "
+                                    "a resumed run lands in a slot it may already name\n");
+            return AVERROR(EINVAL);
+        }
     }
 
     hls->has_default_key = 0;
