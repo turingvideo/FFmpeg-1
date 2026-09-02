@@ -95,6 +95,8 @@ typedef struct HTTPContext {
     int end_header;
     /* A flag which indicates if we use persistent connections. */
     int multiple_requests;
+    int64_t reuse_timeout;
+    int64_t last_request_end;
     uint8_t *post_data;
     int post_datalen;
     int is_akamai;
@@ -152,6 +154,7 @@ static const AVOption options[] = {
     { "user_agent", "override User-Agent header", OFFSET(user_agent), AV_OPT_TYPE_STRING, { .str = DEFAULT_USER_AGENT }, 0, 0, D },
     { "referer", "override referer header", OFFSET(referer), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, D },
     { "multiple_requests", "use persistent connections", OFFSET(multiple_requests), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, D | E },
+    { "reuse_timeout", "maximum idle time in microseconds before reopening a persistent connection", OFFSET(reuse_timeout), AV_OPT_TYPE_INT64, { .i64 = -1 }, -1, INT64_MAX, E },
     { "post_data", "set custom HTTP post data", OFFSET(post_data), AV_OPT_TYPE_BINARY, .flags = D | E },
     { "mime_type", "export the MIME type", OFFSET(mime_type), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, AV_OPT_FLAG_EXPORT | AV_OPT_FLAG_READONLY },
     { "http_version", "export the http response version", OFFSET(http_version), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, AV_OPT_FLAG_EXPORT | AV_OPT_FLAG_READONLY },
@@ -460,6 +463,10 @@ int ff_http_do_new_request2(URLContext *h, const char *uri, AVDictionary **opts)
     int ret;
     char hostname1[1024], hostname2[1024], proto1[10], proto2[10];
     int port1, port2;
+
+    if (s->reuse_timeout >= 0 && s->last_request_end > 0 &&
+        av_gettime_relative() - s->last_request_end >= s->reuse_timeout)
+        return AVERROR(ETIMEDOUT);
 
     if (!h->prot ||
         !(!strcmp(h->prot->name, "http") ||
@@ -1867,6 +1874,9 @@ static int http_shutdown(URLContext *h, int flags)
         }
         s->end_chunked_post = 1;
     }
+
+    if (ret >= 0)
+        s->last_request_end = av_gettime_relative();
 
     return ret;
 }

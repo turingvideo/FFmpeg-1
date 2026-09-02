@@ -248,6 +248,7 @@ typedef struct HLSContext {
     char *master_pl_name;
     unsigned int master_publish_rate;
     int http_persistent;
+    int64_t http_persistent_idle_timeout;
     AVIOContext *m3u8_out;
     AVIOContext *sub_m3u8_out;
     int64_t timeout;
@@ -280,6 +281,19 @@ static int strftime_expand(const char *fmt, char **dest)
     return r;
 }
 
+static int hlsenc_io_open_nonpersistent(AVFormatContext *s, AVIOContext **pb,
+                                        const char *filename, AVDictionary *options)
+{
+    AVDictionary *retry_options = NULL;
+    int ret;
+
+    av_dict_copy(&retry_options, options, 0);
+    av_dict_set_int(&retry_options, "multiple_requests", 0, 0);
+    ret = s->io_open(s, pb, filename, AVIO_FLAG_WRITE, &retry_options);
+    av_dict_free(&retry_options);
+    return ret;
+}
+
 static int hlsenc_io_open(AVFormatContext *s, AVIOContext **pb, const char *filename,
                           AVDictionary **options)
 {
@@ -293,22 +307,35 @@ static int hlsenc_io_open(AVFormatContext *s, AVIOContext **pb, const char *file
         URLContext *http_url_context = ffio_geturlcontext(*pb);
         av_assert0(http_url_context);
         err = ff_http_do_new_request(http_url_context, filename);
-        if (err < 0)
+        if (err < 0) {
             ff_format_io_close(s, pb);
+            av_log(s, AV_LOG_WARNING, "HTTP request reuse failed, retrying without HTTP persistence.\n");
+            err = hlsenc_io_open_nonpersistent(s, pb, filename, *options);
+        }
 
 #endif
     }
     return err;
 }
 
-static int hlsenc_io_close(AVFormatContext *s, AVIOContext **pb, char *filename)
+static int hlsenc_io_is_persistent(AVIOContext *pb)
+{
+    URLContext *http_url_context = ffio_geturlcontext(pb);
+    int64_t persistent = 0;
+
+    return http_url_context &&
+           av_opt_get_int(http_url_context->priv_data, "multiple_requests", 0,
+                          &persistent) >= 0 && persistent;
+}
+
+static int hlsenc_io_close(AVFormatContext *s, AVIOContext **pb, const char *filename)
 {
     HLSContext *hls = s->priv_data;
     int http_base_proto = filename ? ff_is_http_proto(filename) : 0;
     int ret = 0;
     if (!*pb)
         return ret;
-    if (!http_base_proto || !hls->http_persistent || hls->key_info_file || hls->encrypt) {
+    if (!http_base_proto || !hlsenc_io_is_persistent(*pb) || hls->key_info_file || hls->encrypt) {
         ff_format_io_close(s, pb);
 #if CONFIG_HTTP_PROTOCOL
     } else {
@@ -334,6 +361,8 @@ static void set_http_options(AVFormatContext *s, AVDictionary **options, HLSCont
         av_dict_set(options, "user_agent", c->user_agent, 0);
     if (c->http_persistent)
         av_dict_set_int(options, "multiple_requests", 1, 0);
+    if (c->http_persistent_idle_timeout >= 0)
+        av_dict_set_int(options, "reuse_timeout", c->http_persistent_idle_timeout, 0);
     if (c->timeout >= 0)
         av_dict_set_int(options, "timeout", c->timeout, 0);
     if (c->headers)
@@ -554,6 +583,20 @@ static void reflush_dynbuf(VariantStream *vs, int *range_length)
 {
     // re-open buffer
     avio_write(vs->out, vs->temp_buffer, *range_length);
+}
+
+static int retry_segment_nonpersistent(AVFormatContext *s, VariantStream *vs,
+                                       const char *filename, AVDictionary *options,
+                                       int range_length)
+{
+    int ret;
+
+    ret = hlsenc_io_open_nonpersistent(s, &vs->out, filename, options);
+    if (ret < 0)
+        return ret;
+
+    reflush_dynbuf(vs, &range_length);
+    return hlsenc_io_close(s, &vs->out, filename);
 }
 
 #if HAVE_DOS_PATHS
@@ -1673,6 +1716,18 @@ fail:
     return ret;
 }
 
+static int hls_window_nonpersistent(AVFormatContext *s, int last, VariantStream *vs)
+{
+    HLSContext *hls = s->priv_data;
+    int persistent = hls->http_persistent;
+    int ret;
+
+    hls->http_persistent = 0;
+    ret = hls_window(s, last, vs);
+    hls->http_persistent = persistent;
+    return ret;
+}
+
 static int hls_start(AVFormatContext *s, VariantStream *vs)
 {
     HLSContext *c = s->priv_data;
@@ -2580,11 +2635,10 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                 ret = hlsenc_io_close(s, &vs->out, filename);
                 if (ret < 0) {
                     av_log(s, AV_LOG_WARNING, "upload segment failed,"
-                           " will retry with a new http session.\n");
+                           " retrying without HTTP persistence.\n");
                     ff_format_io_close(s, &vs->out);
-                    ret = hlsenc_io_open(s, &vs->out, filename, &options);
-                    reflush_dynbuf(vs, &range_length);
-                    ret = hlsenc_io_close(s, &vs->out, filename);
+                    ret = retry_segment_nonpersistent(s, vs, filename, options,
+                                                      range_length);
                 }
                 av_dict_free(&options);
                 av_freep(&vs->temp_buffer);
@@ -2614,9 +2668,9 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
         // if we're building a VOD playlist, skip writing the manifest multiple times, and just wait until the end
         if (hls->pl_type != PLAYLIST_TYPE_VOD) {
             if ((ret = hls_window(s, 0, vs)) < 0) {
-                av_log(s, AV_LOG_WARNING, "upload playlist failed, will retry with a new http session.\n");
+                av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying without HTTP persistence.\n");
                 ff_format_io_close(s, &vs->out);
-                if ((ret = hls_window(s, 0, vs)) < 0) {
+                if ((ret = hls_window_nonpersistent(s, 0, vs)) < 0) {
                     av_freep(&old_filename);
                     return ret;
                 }
@@ -2785,17 +2839,14 @@ static int hls_write_trailer(struct AVFormatContext *s)
         vs->size = range_length;
         ret = hlsenc_io_close(s, &vs->out, filename);
         if (ret < 0) {
-            av_log(s, AV_LOG_WARNING, "upload segment failed, will retry with a new http session.\n");
+            av_log(s, AV_LOG_WARNING, "upload segment failed, retrying without HTTP persistence.\n");
             ff_format_io_close(s, &vs->out);
-            ret = hlsenc_io_open(s, &vs->out, filename, &options);
+            ret = retry_segment_nonpersistent(s, vs, filename, options,
+                                              range_length);
             if (ret < 0) {
                 av_log(s, AV_LOG_ERROR, "Failed to open file '%s'\n", oc->url);
                 goto failed;
             }
-            reflush_dynbuf(vs, &range_length);
-            ret = hlsenc_io_close(s, &vs->out, filename);
-            if (ret < 0)
-                av_log(s, AV_LOG_WARNING, "Failed to upload file '%s' at the end.\n", oc->url);
         }
         if (hls->flags & HLS_SINGLE_FILE) {
             if (hls->key_info_file || hls->encrypt) {
@@ -2837,9 +2888,9 @@ failed:
         }
         ret = hls_window(s, 1, vs);
         if (ret < 0) {
-            av_log(s, AV_LOG_WARNING, "upload playlist failed, will retry with a new http session.\n");
+            av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying without HTTP persistence.\n");
             ff_format_io_close(s, &vs->out);
-            hls_window(s, 1, vs);
+            hls_window_nonpersistent(s, 1, vs);
         }
         ffio_free_dyn_buf(&oc->pb);
 
@@ -3162,6 +3213,7 @@ static const AVOption options[] = {
     {"master_pl_name", "Create HLS master playlist with this name", OFFSET(master_pl_name), AV_OPT_TYPE_STRING, {.str = NULL},  0, 0,    E},
     {"master_pl_publish_rate", "Publish master play list every after this many segment intervals", OFFSET(master_publish_rate), AV_OPT_TYPE_INT, {.i64 = 0}, 0, UINT_MAX, E},
     {"http_persistent", "Use persistent HTTP connections", OFFSET(http_persistent), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, E },
+    {"http_persistent_idle_timeout", "reopen persistent HTTP connections after this idle time", OFFSET(http_persistent_idle_timeout), AV_OPT_TYPE_DURATION, {.i64 = -1 }, -1, INT_MAX, E },
     {"timeout", "set timeout for socket I/O operations", OFFSET(timeout), AV_OPT_TYPE_DURATION, { .i64 = -1 }, -1, INT_MAX, .flags = E },
     {"ignore_io_errors", "Ignore IO errors for stable long-duration runs with network output", OFFSET(ignore_io_errors), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
     {"headers", "set custom HTTP headers, can override built in default headers", OFFSET(headers), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, E },
