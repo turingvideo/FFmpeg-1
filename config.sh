@@ -28,13 +28,17 @@ echo prefix=deps/$arch
           --enable-avfilter \
           --enable-pthreads \
           --enable-network \
+          --enable-openssl \
           --enable-swscale \
           --enable-swscale-alpha \
           --disable-avdevice \
           --disable-postproc \
           --disable-everything \
           --enable-protocol=file \
+          --enable-protocol=http \
+          --enable-protocol=https \
           --enable-protocol=rtmp \
+          --enable-protocol=tls \
           --enable-filter=aresample \
           --enable-filter=scale \
           --enable-decoder=h264 \
@@ -52,6 +56,7 @@ echo prefix=deps/$arch
           --enable-muxer=rtsp \
           --enable-muxer=rtp \
           --enable-muxer=hevc \
+          --enable-muxer=hls \
           --enable-muxer=image2 \
           --enable-muxer=mjpeg \
           --enable-muxer=data \
