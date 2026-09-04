@@ -1581,7 +1581,7 @@ static int hls_window(AVFormatContext *s, int last, VariantStream *vs)
     double prog_date_time = vs->initial_prog_date_time;
     double *prog_date_time_p = (hls->flags & HLS_PROGRAM_DATE_TIME) ? &prog_date_time : NULL;
     int byterange_mode = (hls->flags & HLS_SINGLE_FILE) || (hls->max_seg_size > 0);
-    int close_ret;
+    int close_ret, sub_started = 0;
 
     hls->version = 2;
     if (!(hls->flags & HLS_ROUND_DURATIONS)) {
@@ -1665,12 +1665,16 @@ static int hls_window(AVFormatContext *s, int last, VariantStream *vs)
         ff_hls_write_end_list(byterange_mode ? hls->m3u8_out : vs->out);
 
     if (vs->vtt_m3u8_name) {
+        // The primary open above consumed the options it recognised out of the dictionary.
+        av_dict_free(&options);
+        set_http_options(s, &options, hls);
         snprintf(temp_vtt_filename, sizeof(temp_vtt_filename), use_temp_file ? "%s.tmp" : "%s", vs->vtt_m3u8_name);
         if ((ret = hlsenc_io_open(s, &hls->sub_m3u8_out, temp_vtt_filename, &options)) < 0) {
             if (hls->ignore_io_errors)
                 ret = 0;
             goto fail;
         }
+        sub_started = 1;
         ff_hls_write_playlist_header(hls->sub_m3u8_out, hls->version, hls->allowcache,
                                      target_duration, sequence, PLAYLIST_TYPE_NONE, 0);
         for (en = vs->segments; en; en = en->next) {
@@ -1692,7 +1696,10 @@ fail:
     // Whatever sent us here is the real error; a close that reports 0 because there was
     // nothing left open must not turn it back into success.
     close_ret = hlsenc_io_close(s, byterange_mode ? &hls->m3u8_out : &vs->out, temp_filename);
-    hlsenc_io_close(s, &hls->sub_m3u8_out, vs->vtt_m3u8_name);
+    // Closing a persistent subtitle context this call never opened would send a second
+    // chunked terminator and wait for a reply that is not coming.
+    if (sub_started)
+        hlsenc_io_close(s, &hls->sub_m3u8_out, vs->vtt_m3u8_name);
     if (ret >= 0)
         ret = close_ret;
     if (ret < 0) {
@@ -1867,12 +1874,16 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
                 vs->basename_tmp = vs->basename;
             }
             set_http_options(s, &options, c);
-            if (!vs->out_single_file)
+            if (!vs->out_single_file) {
                 if ((err = hlsenc_io_open(s, &vs->out_single_file, vs->basename, &options)) < 0) {
                     if (c->ignore_io_errors)
                         err = 0;
                     goto fail;
                 }
+                // That open consumed the options it recognised out of the dictionary.
+                av_dict_free(&options);
+                set_http_options(s, &options, c);
+            }
 
             if ((err = hlsenc_io_open(s, &vs->out, vs->basename_tmp, &options)) < 0) {
                 if (c->ignore_io_errors)
@@ -2912,6 +2923,16 @@ failed:
             }
         }
 
+        // Publishing would point the playlist at a segment the upload never landed, which
+        // is worse for a reader than a playlist that stops one segment short. The append
+        // still has to happen before the vtt cleanup below, which overwrites vs->size.
+        if (!segment_failed) {
+            /* after av_write_trailer, then duration + 1 duration per packet */
+            hls_append_segment(s, hls, vs, vs->duration + vs->dpp, vs->start_pos, vs->size);
+
+            sls_flag_file_rename(hls, vs, old_filename);
+        }
+
         if (vtt_oc) {
             if (vtt_oc->pb)
                 av_write_trailer(vtt_oc);
@@ -2919,14 +2940,7 @@ failed:
             ff_format_io_close(s, &vtt_oc->pb);
         }
 
-        // Publishing now would point the playlist at a segment the upload never landed,
-        // which is worse for a reader than a playlist that stops one segment short.
         if (!segment_failed) {
-            /* after av_write_trailer, then duration + 1 duration per packet */
-            hls_append_segment(s, hls, vs, vs->duration + vs->dpp, vs->start_pos, vs->size);
-
-            sls_flag_file_rename(hls, vs, old_filename);
-
             ret = hls_window(s, 1, vs);
             if (ret < 0) {
                 av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying on a new connection.\n");
