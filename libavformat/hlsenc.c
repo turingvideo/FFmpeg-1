@@ -2474,6 +2474,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
     int stream_index = 0;
     int subtitle_streams = 0;
     int range_length = 0;
+    int segment_failed = 0;
     const char *proto = NULL;
     int use_temp_file = 0;
     VariantStream *vs = NULL;
@@ -2659,12 +2660,15 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                 av_dict_free(&options);
                 av_freep(&vs->temp_buffer);
                 if (ret < 0) {
-                    // Going on would put a segment nobody can fetch into the playlist.
                     av_log(s, hls->ignore_io_errors ? AV_LOG_WARNING : AV_LOG_ERROR,
                            "Failed to upload segment '%s': %s\n", filename, av_err2str(ret));
                     ff_format_io_close(s, &vs->out);
                     av_freep(&filename);
-                    return hls->ignore_io_errors ? 0 : ret;
+                    if (!hls->ignore_io_errors)
+                        return ret;
+                    // Keep muxing: returning here would drop the keyframe this split is
+                    // for and never start the next segment. Just do not publish this one.
+                    segment_failed = 1;
                 }
                 av_freep(&filename);
             }
@@ -2680,7 +2684,10 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
 
         if (vs->start_pos || hls->segment_type != SEGMENT_TYPE_FMP4) {
             double cur_duration =  (double)(pkt->pts - vs->end_pts) * st->time_base.num / st->time_base.den;
-            ret = hls_append_segment(s, hls, vs, cur_duration, vs->start_pos, vs->size);
+            // A segment nobody can fetch does not belong in the playlist, but the timing
+            // bookkeeping still has to advance or the next segment inherits its duration.
+            ret = segment_failed ? 0
+                                 : hls_append_segment(s, hls, vs, cur_duration, vs->start_pos, vs->size);
             vs->end_pts = pkt->pts;
             vs->duration = 0;
             if (ret < 0) {
@@ -2690,7 +2697,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
         }
 
         // if we're building a VOD playlist, skip writing the manifest multiple times, and just wait until the end
-        if (hls->pl_type != PLAYLIST_TYPE_VOD) {
+        if (!segment_failed && hls->pl_type != PLAYLIST_TYPE_VOD) {
             if ((ret = hls_window(s, 0, vs)) < 0) {
                 av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying on a new connection.\n");
                 close_playlist_io(s, vs);
