@@ -1404,7 +1404,7 @@ static int create_master_playlist(AVFormatContext *s,
     AVStream *vid_st, *aud_st;
     AVDictionary *options = NULL;
     unsigned int i, j;
-    int ret, bandwidth;
+    int ret, close_ret, bandwidth;
     const char *m3u8_rel_name = NULL;
     const char *vtt_m3u8_rel_name = NULL;
     const char *ccgroup;
@@ -1553,9 +1553,12 @@ static int create_master_playlist(AVFormatContext *s,
         }
     }
 fail:
-    if (ret >=0)
+    close_ret = hlsenc_io_close(s, &hls->m3u8_out, temp_filename);
+    if (ret >= 0)
+        ret = close_ret;
+    // Marking it created before knowing the upload landed means it is never retried.
+    if (ret >= 0)
         hls->master_m3u8_created = 1;
-    hlsenc_io_close(s, &hls->m3u8_out, temp_filename);
     if (use_temp_file)
         ff_rename(temp_filename, hls->master_m3u8_url, s);
 
@@ -1698,8 +1701,11 @@ fail:
     close_ret = hlsenc_io_close(s, byterange_mode ? &hls->m3u8_out : &vs->out, temp_filename);
     // Closing a persistent subtitle context this call never opened would send a second
     // chunked terminator and wait for a reply that is not coming.
-    if (sub_started)
-        hlsenc_io_close(s, &hls->sub_m3u8_out, vs->vtt_m3u8_name);
+    if (sub_started) {
+        int sub_ret = hlsenc_io_close(s, &hls->sub_m3u8_out, vs->vtt_m3u8_name);
+        if (close_ret >= 0)
+            close_ret = sub_ret;
+    }
     if (ret >= 0)
         ret = close_ret;
     if (ret < 0) {
@@ -2586,6 +2592,9 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                         ff_format_io_close(s, &vs->out);
                         if (!hls->ignore_io_errors)
                             return ret;
+                        // init_range_length is set, so nothing retries the init file; a
+                        // published segment would carry an EXT-X-MAP nobody can fetch.
+                        segment_failed = 1;
                     }
                 }
             }
