@@ -1887,7 +1887,7 @@ static int http_read_write_response(URLContext *h)
     // Only a reply that declared no body at all leaves the connection framed for another
     // request. Anything else would have to be drained first, and nothing here wants to
     // read it, so retire the connection instead.
-    if (s->http_code != 204 && s->filesize != 0)
+    if (s->http_code != 204 && (s->filesize != 0 || s->chunksize != UINT64_MAX))
         s->willclose = 1;
 
     return 0;

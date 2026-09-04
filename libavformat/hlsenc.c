@@ -1581,6 +1581,7 @@ static int hls_window(AVFormatContext *s, int last, VariantStream *vs)
     double prog_date_time = vs->initial_prog_date_time;
     double *prog_date_time_p = (hls->flags & HLS_PROGRAM_DATE_TIME) ? &prog_date_time : NULL;
     int byterange_mode = (hls->flags & HLS_SINGLE_FILE) || (hls->max_seg_size > 0);
+    int close_ret;
 
     hls->version = 2;
     if (!(hls->flags & HLS_ROUND_DURATIONS)) {
@@ -1688,8 +1689,12 @@ static int hls_window(AVFormatContext *s, int last, VariantStream *vs)
 
 fail:
     av_dict_free(&options);
-    ret = hlsenc_io_close(s, byterange_mode ? &hls->m3u8_out : &vs->out, temp_filename);
+    // Whatever sent us here is the real error; a close that reports 0 because there was
+    // nothing left open must not turn it back into success.
+    close_ret = hlsenc_io_close(s, byterange_mode ? &hls->m3u8_out : &vs->out, temp_filename);
     hlsenc_io_close(s, &hls->sub_m3u8_out, vs->vtt_m3u8_name);
+    if (ret >= 0)
+        ret = close_ret;
     if (ret < 0) {
         return ret;
     }
@@ -2407,9 +2412,11 @@ static int hls_init_file_resend(AVFormatContext *s, VariantStream *vs)
         return ret;
     avio_write(vs->out, vs->init_buffer, vs->init_range_length);
     ret = hlsenc_io_close(s, &vs->out, hls->fmp4_init_filename);
-    if (ret < 0)
+    if (ret < 0) {
         av_log(s, AV_LOG_ERROR, "Failed to resend init file '%s': %s\n",
                hls->fmp4_init_filename, av_err2str(ret));
+        ff_format_io_close(s, &vs->out);
+    }
 
     return ret;
 }
@@ -2677,6 +2684,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                 av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying on a new connection.\n");
                 close_playlist_io(s, vs);
                 if ((ret = hls_window(s, 0, vs)) < 0) {
+                    close_playlist_io(s, vs);
                     av_freep(&old_filename);
                     return ret;
                 }
@@ -2788,6 +2796,7 @@ static int hls_write_trailer(struct AVFormatContext *s)
 
     for (i = 0; i < hls->nb_varstreams; i++) {
         char *filename = NULL;
+        int segment_failed = 0;
         vs = &hls->var_streams[i];
         oc = vs->avf;
         vtt_oc = vs->vtt_avf;
@@ -2824,8 +2833,19 @@ static int hls_write_trailer(struct AVFormatContext *s)
                 vs->start_pos = range_length;
                 byterange_mode = (hls->flags & HLS_SINGLE_FILE) || (hls->max_seg_size > 0);
                 if (!byterange_mode) {
-                    ff_format_io_close(s, &vs->out);
-                    hlsenc_io_close(s, &vs->out, vs->base_output_dirname);
+                    ret = hlsenc_io_close(s, &vs->out, vs->base_output_dirname);
+                    if (ret < 0) {
+                        // A stream shorter than one segment closes its init file here.
+                        av_log(s, hls->ignore_io_errors ? AV_LOG_WARNING : AV_LOG_ERROR,
+                               "Failed to upload init file '%s': %s\n",
+                               vs->base_output_dirname, av_err2str(ret));
+                        ff_format_io_close(s, &vs->out);
+                        if (!hls->ignore_io_errors) {
+                            last_err = ret;
+                            segment_failed = 1;
+                            goto failed;
+                        }
+                    }
                 }
             }
         }
@@ -2834,14 +2854,20 @@ static int hls_write_trailer(struct AVFormatContext *s)
             ret = hlsenc_io_open(s, &vs->out, filename, &options);
             if (ret < 0) {
                 av_log(s, AV_LOG_ERROR, "Failed to open file '%s'\n", oc->url);
+                if (!hls->ignore_io_errors)
+                    last_err = ret;
+                segment_failed = 1;
                 goto failed;
             }
             if (hls->segment_type == SEGMENT_TYPE_FMP4)
                 write_styp(vs->out);
         }
         ret = flush_dynbuf(vs, &range_length);
-        if (ret < 0)
+        if (ret < 0) {
+            last_err = ret;
+            segment_failed = 1;
             goto failed;
+        }
 
         vs->size = range_length;
         ret = hlsenc_io_close(s, &vs->out, filename);
@@ -2856,6 +2882,7 @@ static int hls_write_trailer(struct AVFormatContext *s)
             ff_format_io_close(s, &vs->out);
             if (!hls->ignore_io_errors)
                 last_err = ret;
+            segment_failed = 1;
             goto failed;
         }
         if (hls->flags & HLS_SINGLE_FILE) {
@@ -2885,25 +2912,32 @@ failed:
             }
         }
 
-        /* after av_write_trailer, then duration + 1 duration per packet */
-        hls_append_segment(s, hls, vs, vs->duration + vs->dpp, vs->start_pos, vs->size);
-
-        sls_flag_file_rename(hls, vs, old_filename);
-
         if (vtt_oc) {
             if (vtt_oc->pb)
                 av_write_trailer(vtt_oc);
             vs->size = avio_tell(vs->vtt_avf->pb) - vs->start_pos;
             ff_format_io_close(s, &vtt_oc->pb);
         }
-        ret = hls_window(s, 1, vs);
-        if (ret < 0) {
-            av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying on a new connection.\n");
-            close_playlist_io(s, vs);
+
+        // Publishing now would point the playlist at a segment the upload never landed,
+        // which is worse for a reader than a playlist that stops one segment short.
+        if (!segment_failed) {
+            /* after av_write_trailer, then duration + 1 duration per packet */
+            hls_append_segment(s, hls, vs, vs->duration + vs->dpp, vs->start_pos, vs->size);
+
+            sls_flag_file_rename(hls, vs, old_filename);
+
             ret = hls_window(s, 1, vs);
+            if (ret < 0) {
+                av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying on a new connection.\n");
+                close_playlist_io(s, vs);
+                ret = hls_window(s, 1, vs);
+                if (ret < 0)
+                    close_playlist_io(s, vs);
+            }
+            if (ret < 0 && !hls->ignore_io_errors)
+                last_err = ret;
         }
-        if (ret < 0 && !hls->ignore_io_errors)
-            last_err = ret;
         ffio_free_dyn_buf(&oc->pb);
 
         av_free(old_filename);
