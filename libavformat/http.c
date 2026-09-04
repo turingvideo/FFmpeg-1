@@ -97,6 +97,8 @@ typedef struct HTTPContext {
     int multiple_requests;
     int64_t reuse_timeout;
     int64_t last_request_end;
+    /* A flag which indicates if we read back the reply to a write request. */
+    int read_response;
     uint8_t *post_data;
     int post_datalen;
     int is_akamai;
@@ -155,6 +157,7 @@ static const AVOption options[] = {
     { "referer", "override referer header", OFFSET(referer), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, D },
     { "multiple_requests", "use persistent connections", OFFSET(multiple_requests), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, D | E },
     { "reuse_timeout", "maximum idle time in microseconds before reopening a persistent connection", OFFSET(reuse_timeout), AV_OPT_TYPE_INT64, { .i64 = -1 }, -1, INT64_MAX, E },
+    { "read_response", "read and check the reply before finishing a write request", OFFSET(read_response), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
     { "post_data", "set custom HTTP post data", OFFSET(post_data), AV_OPT_TYPE_BINARY, .flags = D | E },
     { "mime_type", "export the MIME type", OFFSET(mime_type), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, AV_OPT_FLAG_EXPORT | AV_OPT_FLAG_READONLY },
     { "http_version", "export the http response version", OFFSET(http_version), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, AV_OPT_FLAG_EXPORT | AV_OPT_FLAG_READONLY },
@@ -1862,14 +1865,28 @@ static int http_shutdown(URLContext *h, int flags)
         ret = ret > 0 ? 0 : ret;
         /* flush the receive buffer when it is write only mode */
         if (!(flags & AVIO_FLAG_READ)) {
-            char buf[1024];
-            int read_ret;
-            s->hd->flags |= AVIO_FLAG_NONBLOCK;
-            read_ret = ffurl_read(s->hd, buf, sizeof(buf));
-            s->hd->flags &= ~AVIO_FLAG_NONBLOCK;
-            if (read_ret < 0 && read_ret != AVERROR(EAGAIN)) {
-                av_log(h, AV_LOG_ERROR, "URL read error: %s\n", av_err2str(read_ret));
-                ret = read_ret;
+            if (s->read_response && ret >= 0) {
+                // http_connect fakes a 200 for a write request and leaves the real reply in
+                // the socket, where the next request on this connection collects it. Read it
+                // here instead, so the caller learns this request's verdict rather than the
+                // previous one's. process_line only parses a status line at line_count 0.
+                s->line_count = 0;
+                s->end_header = 0;
+                ret = http_read_header(h);
+                if (ret >= 0 && s->http_code >= 400)
+                    ret = ff_http_averror(s->http_code, AVERROR(EIO));
+                if (ret < 0)
+                    av_log(h, AV_LOG_ERROR, "Write request failed: %s\n", av_err2str(ret));
+            } else {
+                char buf[1024];
+                int read_ret;
+                s->hd->flags |= AVIO_FLAG_NONBLOCK;
+                read_ret = ffurl_read(s->hd, buf, sizeof(buf));
+                s->hd->flags &= ~AVIO_FLAG_NONBLOCK;
+                if (read_ret < 0 && read_ret != AVERROR(EAGAIN)) {
+                    av_log(h, AV_LOG_ERROR, "URL read error: %s\n", av_err2str(read_ret));
+                    ret = read_ret;
+                }
             }
         }
         s->end_chunked_post = 1;

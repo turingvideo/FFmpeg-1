@@ -281,19 +281,6 @@ static int strftime_expand(const char *fmt, char **dest)
     return r;
 }
 
-static int hlsenc_io_open_nonpersistent(AVFormatContext *s, AVIOContext **pb,
-                                        const char *filename, AVDictionary *options)
-{
-    AVDictionary *retry_options = NULL;
-    int ret;
-
-    av_dict_copy(&retry_options, options, 0);
-    av_dict_set_int(&retry_options, "multiple_requests", 0, 0);
-    ret = s->io_open(s, pb, filename, AVIO_FLAG_WRITE, &retry_options);
-    av_dict_free(&retry_options);
-    return ret;
-}
-
 static int hlsenc_io_open(AVFormatContext *s, AVIOContext **pb, const char *filename,
                           AVDictionary **options)
 {
@@ -309,23 +296,13 @@ static int hlsenc_io_open(AVFormatContext *s, AVIOContext **pb, const char *file
         err = ff_http_do_new_request(http_url_context, filename);
         if (err < 0) {
             ff_format_io_close(s, pb);
-            av_log(s, AV_LOG_WARNING, "HTTP request reuse failed, retrying without HTTP persistence.\n");
-            err = hlsenc_io_open_nonpersistent(s, pb, filename, *options);
+            av_log(s, AV_LOG_WARNING, "HTTP request reuse failed, retrying on a new connection.\n");
+            err = s->io_open(s, pb, filename, AVIO_FLAG_WRITE, options);
         }
 
 #endif
     }
     return err;
-}
-
-static int hlsenc_io_is_persistent(AVIOContext *pb)
-{
-    URLContext *http_url_context = ffio_geturlcontext(pb);
-    int64_t persistent = 0;
-
-    return http_url_context &&
-           av_opt_get_int(http_url_context->priv_data, "multiple_requests", 0,
-                          &persistent) >= 0 && persistent;
 }
 
 static int hlsenc_io_close(AVFormatContext *s, AVIOContext **pb, const char *filename)
@@ -335,8 +312,8 @@ static int hlsenc_io_close(AVFormatContext *s, AVIOContext **pb, const char *fil
     int ret = 0;
     if (!*pb)
         return ret;
-    if (!http_base_proto || !hlsenc_io_is_persistent(*pb) || hls->key_info_file || hls->encrypt) {
-        ff_format_io_close(s, pb);
+    if (!http_base_proto || !hls->http_persistent || hls->key_info_file || hls->encrypt) {
+        ret = ff_format_io_close(s, pb);
 #if CONFIG_HTTP_PROTOCOL
     } else {
         URLContext *http_url_context = ffio_geturlcontext(*pb);
@@ -359,6 +336,12 @@ static void set_http_options(AVFormatContext *s, AVDictionary **options, HLSCont
     }
     if (c->user_agent)
         av_dict_set(options, "user_agent", c->user_agent, 0);
+    // Without this the muxer cannot tell whether a segment upload was accepted: the reply
+    // to a write request is otherwise only collected by the next request on the connection.
+    av_dict_set_int(options, "read_response", 1, 0);
+    // The chunked terminator is a 5 byte write trailing a whole segment, so Nagle holds it
+    // for a delayed ack while the muxer waits on the reply it precedes.
+    av_dict_set_int(options, "tcp_nodelay", 1, 0);
     if (c->http_persistent)
         av_dict_set_int(options, "multiple_requests", 1, 0);
     if (c->http_persistent_idle_timeout >= 0)
@@ -585,13 +568,13 @@ static void reflush_dynbuf(VariantStream *vs, int *range_length)
     avio_write(vs->out, vs->temp_buffer, *range_length);
 }
 
-static int retry_segment_nonpersistent(AVFormatContext *s, VariantStream *vs,
-                                       const char *filename, AVDictionary *options,
-                                       int range_length)
+static int retry_segment_upload(AVFormatContext *s, VariantStream *vs,
+                                const char *filename, AVDictionary **options,
+                                int range_length)
 {
     int ret;
 
-    ret = hlsenc_io_open_nonpersistent(s, &vs->out, filename, options);
+    ret = hlsenc_io_open(s, &vs->out, filename, options);
     if (ret < 0)
         return ret;
 
@@ -1716,18 +1699,6 @@ fail:
     return ret;
 }
 
-static int hls_window_nonpersistent(AVFormatContext *s, int last, VariantStream *vs)
-{
-    HLSContext *hls = s->priv_data;
-    int persistent = hls->http_persistent;
-    int ret;
-
-    hls->http_persistent = 0;
-    ret = hls_window(s, last, vs);
-    hls->http_persistent = persistent;
-    return ret;
-}
-
 static int hls_start(AVFormatContext *s, VariantStream *vs)
 {
     HLSContext *c = s->priv_data;
@@ -2419,7 +2390,10 @@ static int hls_init_file_resend(AVFormatContext *s, VariantStream *vs)
     if (ret < 0)
         return ret;
     avio_write(vs->out, vs->init_buffer, vs->init_range_length);
-    hlsenc_io_close(s, &vs->out, hls->fmp4_init_filename);
+    ret = hlsenc_io_close(s, &vs->out, hls->fmp4_init_filename);
+    if (ret < 0)
+        av_log(s, AV_LOG_ERROR, "Failed to resend init file '%s': %s\n",
+               hls->fmp4_init_filename, av_err2str(ret));
 
     return ret;
 }
@@ -2633,13 +2607,16 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                     return ret;
                 }
                 ret = hlsenc_io_close(s, &vs->out, filename);
-                if (ret < 0) {
+                if (ret < 0 && ff_is_http_proto(filename)) {
                     av_log(s, AV_LOG_WARNING, "upload segment failed,"
-                           " retrying without HTTP persistence.\n");
+                           " retrying on a new connection.\n");
                     ff_format_io_close(s, &vs->out);
-                    ret = retry_segment_nonpersistent(s, vs, filename, options,
-                                                      range_length);
+                    ret = retry_segment_upload(s, vs, filename, &options,
+                                               range_length);
                 }
+                if (ret < 0)
+                    av_log(s, AV_LOG_ERROR, "Failed to upload segment '%s': %s\n",
+                           filename, av_err2str(ret));
                 av_dict_free(&options);
                 av_freep(&vs->temp_buffer);
                 av_freep(&filename);
@@ -2668,9 +2645,10 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
         // if we're building a VOD playlist, skip writing the manifest multiple times, and just wait until the end
         if (hls->pl_type != PLAYLIST_TYPE_VOD) {
             if ((ret = hls_window(s, 0, vs)) < 0) {
-                av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying without HTTP persistence.\n");
-                ff_format_io_close(s, &vs->out);
-                if ((ret = hls_window_nonpersistent(s, 0, vs)) < 0) {
+                // Do not close vs->out here: with a byterange playlist that is the segment
+                // output, not the playlist, and hls_window reopens its own connection.
+                av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying on a new connection.\n");
+                if ((ret = hls_window(s, 0, vs)) < 0) {
                     av_freep(&old_filename);
                     return ret;
                 }
@@ -2838,15 +2816,16 @@ static int hls_write_trailer(struct AVFormatContext *s)
 
         vs->size = range_length;
         ret = hlsenc_io_close(s, &vs->out, filename);
-        if (ret < 0) {
-            av_log(s, AV_LOG_WARNING, "upload segment failed, retrying without HTTP persistence.\n");
+        if (ret < 0 && ff_is_http_proto(filename)) {
+            av_log(s, AV_LOG_WARNING, "upload segment failed, retrying on a new connection.\n");
             ff_format_io_close(s, &vs->out);
-            ret = retry_segment_nonpersistent(s, vs, filename, options,
-                                              range_length);
-            if (ret < 0) {
-                av_log(s, AV_LOG_ERROR, "Failed to open file '%s'\n", oc->url);
-                goto failed;
-            }
+            ret = retry_segment_upload(s, vs, filename, &options,
+                                       range_length);
+        }
+        if (ret < 0) {
+            av_log(s, AV_LOG_ERROR, "Failed to upload last segment '%s': %s\n",
+                   oc->url, av_err2str(ret));
+            goto failed;
         }
         if (hls->flags & HLS_SINGLE_FILE) {
             if (hls->key_info_file || hls->encrypt) {
@@ -2888,9 +2867,8 @@ failed:
         }
         ret = hls_window(s, 1, vs);
         if (ret < 0) {
-            av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying without HTTP persistence.\n");
-            ff_format_io_close(s, &vs->out);
-            hls_window_nonpersistent(s, 1, vs);
+            av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying on a new connection.\n");
+            hls_window(s, 1, vs);
         }
         ffio_free_dyn_buf(&oc->pb);
 
