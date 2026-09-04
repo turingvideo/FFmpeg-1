@@ -157,7 +157,7 @@ static const AVOption options[] = {
     { "referer", "override referer header", OFFSET(referer), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, D },
     { "multiple_requests", "use persistent connections", OFFSET(multiple_requests), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, D | E },
     { "reuse_timeout", "maximum idle time in microseconds before reopening a persistent connection", OFFSET(reuse_timeout), AV_OPT_TYPE_INT64, { .i64 = -1 }, -1, INT64_MAX, E },
-    { "read_response", "read and check the reply before finishing a write request", OFFSET(read_response), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
+    { "read_response", "read and check the reply before finishing a chunked write request", OFFSET(read_response), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
     { "post_data", "set custom HTTP post data", OFFSET(post_data), AV_OPT_TYPE_BINARY, .flags = D | E },
     { "mime_type", "export the MIME type", OFFSET(mime_type), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, AV_OPT_FLAG_EXPORT | AV_OPT_FLAG_READONLY },
     { "http_version", "export the http response version", OFFSET(http_version), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, AV_OPT_FLAG_EXPORT | AV_OPT_FLAG_READONLY },
@@ -1852,6 +1852,47 @@ static int http_write(URLContext *h, const uint8_t *buf, int size)
     return size;
 }
 
+// http_connect fakes a 200 for a write request and leaves the real reply in the socket,
+// where the next request on this connection collects it. Read it here instead, so the
+// caller learns this request's verdict rather than the previous one's.
+static int http_read_write_response(URLContext *h)
+{
+    HTTPContext *s = h->priv_data;
+    int i, ret;
+
+    // An interim reply is not the verdict, so keep reading. The bound is arbitrary; a peer
+    // that only ever sends 1xx is broken and must not stall the caller forever.
+    for (i = 0; i < 8; i++) {
+        // process_line only parses a status line at line_count 0.
+        s->line_count = 0;
+        s->end_header = 0;
+        s->filesize   = UINT64_MAX;
+        s->willclose  = 0;
+        ret = http_read_header(h);
+        if (ret < 0) {
+            // The status line already failed, so the rest of the reply is still queued and
+            // this connection can no longer be framed. Make the next reuse reopen it.
+            s->willclose = 1;
+            return ret;
+        }
+        if (s->http_code < 100 || s->http_code >= 200)
+            break;
+    }
+
+    if (s->http_code < 200 || s->http_code >= 300) {
+        s->willclose = 1;
+        return ff_http_averror(s->http_code, AVERROR(EIO));
+    }
+
+    // Only a reply that declared no body at all leaves the connection framed for another
+    // request. Anything else would have to be drained first, and nothing here wants to
+    // read it, so retire the connection instead.
+    if (s->http_code != 204 && s->filesize != 0)
+        s->willclose = 1;
+
+    return 0;
+}
+
 static int http_shutdown(URLContext *h, int flags)
 {
     int ret = 0;
@@ -1866,15 +1907,7 @@ static int http_shutdown(URLContext *h, int flags)
         /* flush the receive buffer when it is write only mode */
         if (!(flags & AVIO_FLAG_READ)) {
             if (s->read_response && ret >= 0) {
-                // http_connect fakes a 200 for a write request and leaves the real reply in
-                // the socket, where the next request on this connection collects it. Read it
-                // here instead, so the caller learns this request's verdict rather than the
-                // previous one's. process_line only parses a status line at line_count 0.
-                s->line_count = 0;
-                s->end_header = 0;
-                ret = http_read_header(h);
-                if (ret >= 0 && s->http_code >= 400)
-                    ret = ff_http_averror(s->http_code, AVERROR(EIO));
+                ret = http_read_write_response(h);
                 if (ret < 0)
                     av_log(h, AV_LOG_ERROR, "Write request failed: %s\n", av_err2str(ret));
             } else {

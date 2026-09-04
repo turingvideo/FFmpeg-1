@@ -71,6 +71,7 @@ typedef enum {
 #define LINE_BUFFER_SIZE MAX_URL_SIZE
 #define HLS_MICROSECOND_UNIT   1000000
 #define BUFSIZE (16 * 1024)
+#define HLS_DEFAULT_TIMEOUT (30 * AV_TIME_BASE)
 #define POSTFIX_PATTERN "_%d"
 
 typedef struct HLSSegment {
@@ -346,8 +347,9 @@ static void set_http_options(AVFormatContext *s, AVDictionary **options, HLSCont
         av_dict_set_int(options, "multiple_requests", 1, 0);
     if (c->http_persistent_idle_timeout >= 0)
         av_dict_set_int(options, "reuse_timeout", c->http_persistent_idle_timeout, 0);
-    if (c->timeout >= 0)
-        av_dict_set_int(options, "timeout", c->timeout, 0);
+    // read_response blocks on the reply, so an unset timeout would let a silent peer stall
+    // the muxer for good.
+    av_dict_set_int(options, "timeout", c->timeout >= 0 ? c->timeout : HLS_DEFAULT_TIMEOUT, 0);
     if (c->headers)
         av_dict_set(options, "headers", c->headers, 0);
 }
@@ -569,12 +571,16 @@ static void reflush_dynbuf(VariantStream *vs, int *range_length)
 }
 
 static int retry_segment_upload(AVFormatContext *s, VariantStream *vs,
-                                const char *filename, AVDictionary **options,
-                                int range_length)
+                                const char *filename, int range_length)
 {
+    // Fresh options: io_open strips the ones it recognised out of the dictionary the first
+    // attempt used, so reusing it would drop method, persistence and the rest.
+    AVDictionary *options = NULL;
     int ret;
 
-    ret = hlsenc_io_open(s, &vs->out, filename, options);
+    set_http_options(s, &options, s->priv_data);
+    ret = hlsenc_io_open(s, &vs->out, filename, &options);
+    av_dict_free(&options);
     if (ret < 0)
         return ret;
 
@@ -1683,10 +1689,10 @@ static int hls_window(AVFormatContext *s, int last, VariantStream *vs)
 fail:
     av_dict_free(&options);
     ret = hlsenc_io_close(s, byterange_mode ? &hls->m3u8_out : &vs->out, temp_filename);
+    hlsenc_io_close(s, &hls->sub_m3u8_out, vs->vtt_m3u8_name);
     if (ret < 0) {
         return ret;
     }
-    hlsenc_io_close(s, &hls->sub_m3u8_out, vs->vtt_m3u8_name);
     if (use_temp_file) {
         ff_rename(temp_filename, vs->m3u8_name, s);
         if (vs->vtt_m3u8_name)
@@ -1697,6 +1703,16 @@ fail:
             av_log(s, AV_LOG_WARNING, "Master playlist creation failed\n");
 
     return ret;
+}
+
+// A failed playlist upload leaves its connection mid-reply, so drop the context hls_window
+// actually used. With a byterange playlist that is not vs->out, which is the segment output.
+static void close_playlist_io(AVFormatContext *s, VariantStream *vs)
+{
+    HLSContext *hls = s->priv_data;
+    int byterange_mode = (hls->flags & HLS_SINGLE_FILE) || (hls->max_seg_size > 0);
+
+    ff_format_io_close(s, byterange_mode ? &hls->m3u8_out : &vs->out);
 }
 
 static int hls_start(AVFormatContext *s, VariantStream *vs)
@@ -2542,7 +2558,16 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                 vs->packets_written = 0;
                 vs->start_pos = range_length;
                 if (!byterange_mode) {
-                    hlsenc_io_close(s, &vs->out, vs->base_output_dirname);
+                    ret = hlsenc_io_close(s, &vs->out, vs->base_output_dirname);
+                    if (ret < 0) {
+                        // Every segment that follows references this init file.
+                        av_log(s, hls->ignore_io_errors ? AV_LOG_WARNING : AV_LOG_ERROR,
+                               "Failed to upload init file '%s': %s\n",
+                               vs->base_output_dirname, av_err2str(ret));
+                        ff_format_io_close(s, &vs->out);
+                        if (!hls->ignore_io_errors)
+                            return ret;
+                    }
                 }
             }
         }
@@ -2611,14 +2636,18 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                     av_log(s, AV_LOG_WARNING, "upload segment failed,"
                            " retrying on a new connection.\n");
                     ff_format_io_close(s, &vs->out);
-                    ret = retry_segment_upload(s, vs, filename, &options,
-                                               range_length);
+                    ret = retry_segment_upload(s, vs, filename, range_length);
                 }
-                if (ret < 0)
-                    av_log(s, AV_LOG_ERROR, "Failed to upload segment '%s': %s\n",
-                           filename, av_err2str(ret));
                 av_dict_free(&options);
                 av_freep(&vs->temp_buffer);
+                if (ret < 0) {
+                    // Going on would put a segment nobody can fetch into the playlist.
+                    av_log(s, hls->ignore_io_errors ? AV_LOG_WARNING : AV_LOG_ERROR,
+                           "Failed to upload segment '%s': %s\n", filename, av_err2str(ret));
+                    ff_format_io_close(s, &vs->out);
+                    av_freep(&filename);
+                    return hls->ignore_io_errors ? 0 : ret;
+                }
                 av_freep(&filename);
             }
 
@@ -2645,9 +2674,8 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
         // if we're building a VOD playlist, skip writing the manifest multiple times, and just wait until the end
         if (hls->pl_type != PLAYLIST_TYPE_VOD) {
             if ((ret = hls_window(s, 0, vs)) < 0) {
-                // Do not close vs->out here: with a byterange playlist that is the segment
-                // output, not the playlist, and hls_window reopens its own connection.
                 av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying on a new connection.\n");
+                close_playlist_io(s, vs);
                 if ((ret = hls_window(s, 0, vs)) < 0) {
                     av_freep(&old_filename);
                     return ret;
@@ -2753,6 +2781,7 @@ static int hls_write_trailer(struct AVFormatContext *s)
     int use_temp_file = 0;
     int i;
     int ret = 0;
+    int last_err = 0;
     VariantStream *vs = NULL;
     AVDictionary *options = NULL;
     int range_length, byterange_mode;
@@ -2819,12 +2848,14 @@ static int hls_write_trailer(struct AVFormatContext *s)
         if (ret < 0 && ff_is_http_proto(filename)) {
             av_log(s, AV_LOG_WARNING, "upload segment failed, retrying on a new connection.\n");
             ff_format_io_close(s, &vs->out);
-            ret = retry_segment_upload(s, vs, filename, &options,
-                                       range_length);
+            ret = retry_segment_upload(s, vs, filename, range_length);
         }
         if (ret < 0) {
-            av_log(s, AV_LOG_ERROR, "Failed to upload last segment '%s': %s\n",
-                   oc->url, av_err2str(ret));
+            av_log(s, hls->ignore_io_errors ? AV_LOG_WARNING : AV_LOG_ERROR,
+                   "Failed to upload last segment '%s': %s\n", oc->url, av_err2str(ret));
+            ff_format_io_close(s, &vs->out);
+            if (!hls->ignore_io_errors)
+                last_err = ret;
             goto failed;
         }
         if (hls->flags & HLS_SINGLE_FILE) {
@@ -2868,14 +2899,17 @@ failed:
         ret = hls_window(s, 1, vs);
         if (ret < 0) {
             av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying on a new connection.\n");
-            hls_window(s, 1, vs);
+            close_playlist_io(s, vs);
+            ret = hls_window(s, 1, vs);
         }
+        if (ret < 0 && !hls->ignore_io_errors)
+            last_err = ret;
         ffio_free_dyn_buf(&oc->pb);
 
         av_free(old_filename);
     }
 
-    return 0;
+    return last_err;
 }
 
 
