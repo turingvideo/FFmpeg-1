@@ -571,7 +571,8 @@ static void reflush_dynbuf(VariantStream *vs, int *range_length)
 }
 
 static int retry_segment_upload(AVFormatContext *s, VariantStream *vs,
-                                const char *filename, int range_length)
+                                const char *filename, int range_length,
+                                int with_styp)
 {
     // Fresh options: io_open strips the ones it recognised out of the dictionary the first
     // attempt used, so reusing it would drop method, persistence and the rest.
@@ -584,6 +585,12 @@ static int retry_segment_upload(AVFormatContext *s, VariantStream *vs,
     if (ret < 0)
         return ret;
 
+    // The styp precedes the dynbuf rather than living in it, so a retry that only resends
+    // the dynbuf sends a shorter segment than the one it is retrying. The first attempt may
+    // well have been stored before its reply was lost, and a store that has the segment
+    // compares the retry against it and refuses a body that differs.
+    if (with_styp)
+        write_styp(vs->out);
     reflush_dynbuf(vs, &range_length);
     return hlsenc_io_close(s, &vs->out, filename);
 }
@@ -2664,7 +2671,8 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                     av_log(s, AV_LOG_WARNING, "upload segment failed,"
                            " retrying on a new connection.\n");
                     ff_format_io_close(s, &vs->out);
-                    ret = retry_segment_upload(s, vs, filename, range_length);
+                    ret = retry_segment_upload(s, vs, filename, range_length,
+                                               hls->segment_type == SEGMENT_TYPE_FMP4);
                 }
                 av_dict_free(&options);
                 av_freep(&vs->temp_buffer);
@@ -2901,7 +2909,9 @@ static int hls_write_trailer(struct AVFormatContext *s)
         if (ret < 0 && ff_is_http_proto(filename)) {
             av_log(s, AV_LOG_WARNING, "upload segment failed, retrying on a new connection.\n");
             ff_format_io_close(s, &vs->out);
-            ret = retry_segment_upload(s, vs, filename, range_length);
+            ret = retry_segment_upload(s, vs, filename, range_length,
+                                       !(hls->flags & HLS_SINGLE_FILE) &&
+                                       hls->segment_type == SEGMENT_TYPE_FMP4);
         }
         if (ret < 0) {
             av_log(s, hls->ignore_io_errors ? AV_LOG_WARNING : AV_LOG_ERROR,
