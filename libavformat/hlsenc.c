@@ -1724,9 +1724,16 @@ fail:
         if (vs->vtt_m3u8_name)
             ff_rename(temp_vtt_filename, vs->vtt_m3u8_name, s);
     }
-    if (ret >= 0 && hls->master_pl_name)
-        if (create_master_playlist(s, vs) < 0)
+    if (ret >= 0 && hls->master_pl_name) {
+        // A VOD master playlist is only ever attempted from the trailer's single
+        // hls_window call, so swallowing this leaves no entry playlist at all and still
+        // reports success.
+        int master_ret = create_master_playlist(s, vs);
+        if (master_ret < 0) {
             av_log(s, AV_LOG_WARNING, "Master playlist creation failed\n");
+            ret = master_ret;
+        }
+    }
 
     return ret;
 }
@@ -2713,16 +2720,13 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             double cur_duration =  (double)(pkt->pts - vs->end_pts) * st->time_base.num / st->time_base.den;
             // A segment nobody can fetch does not belong in the playlist, but the timing
             // bookkeeping still has to advance or the next segment inherits its duration.
-            if (segment_failed) {
-                // hls_append_segment would have advanced this. Leaving it means the next
-                // segment reuses this name, and a store that already holds the failed
-                // upload's body refuses the new one forever.
-                if (hls->max_seg_size <= 0)
-                    vs->sequence++;
-                ret = 0;
-            } else {
-                ret = hls_append_segment(s, hls, vs, cur_duration, vs->start_pos, vs->size);
-            }
+            // vs->sequence deliberately stays put: hls_window derives EXT-X-MEDIA-SEQUENCE
+            // from it minus nb_entries, so advancing it without appending renumbers the
+            // entries that are still listed and a reader replays or skips them. The next
+            // segment reuses this number, which is what a retry of an upload nobody
+            // confirmed should do.
+            ret = segment_failed ? 0
+                                 : hls_append_segment(s, hls, vs, cur_duration, vs->start_pos, vs->size);
             vs->end_pts = pkt->pts;
             vs->duration = 0;
             if (ret < 0) {
@@ -2738,8 +2742,13 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                 close_playlist_io(s, vs);
                 if ((ret = hls_window(s, 0, vs)) < 0) {
                     close_playlist_io(s, vs);
-                    av_freep(&old_filename);
-                    return ret;
+                    // The segment paths above already treat this option as "keep muxing";
+                    // killing the run over a manifest upload would contradict them.
+                    if (!hls->ignore_io_errors) {
+                        av_freep(&old_filename);
+                        return ret;
+                    }
+                    ret = 0;
                 }
             }
         }
