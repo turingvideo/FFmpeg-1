@@ -2773,9 +2773,15 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
         if (hls->resend_init_file && hls->segment_type == SEGMENT_TYPE_FMP4) {
             ret = hls_init_file_resend(s, vs);
             if (ret < 0) {
-                vs->upload_aborted = 1;
-                av_freep(&old_filename);
-                return ret;
+                // The segment and playlist paths above read this option as "keep muxing",
+                // and the init file a rejected resend was refreshing is still the one the
+                // playlists name, so a later resend can still recover it.
+                if (!hls->ignore_io_errors) {
+                    vs->upload_aborted = 1;
+                    av_freep(&old_filename);
+                    return ret;
+                }
+                ret = 0;
             }
         }
 
