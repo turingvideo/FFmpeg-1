@@ -126,6 +126,7 @@ typedef struct VariantStream {
     AVIOContext *out_single_file;
     int packets_written;
     int init_range_length;
+    int init_failed;
     uint8_t *temp_buffer;
     uint8_t *init_buffer;
 
@@ -1896,6 +1897,12 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
                 // That open consumed the options it recognised out of the dictionary.
                 av_dict_free(&options);
                 set_http_options(s, &options, c);
+                // The crypto open below still needs these; the plain open above does not
+                // recognise them, so they were never consumed, only freed.
+                if (c->key_info_file || c->encrypt) {
+                    av_dict_set(&options, "encryption_key", vs->key_string, 0);
+                    av_dict_set(&options, "encryption_iv", vs->iv_string, 0);
+                }
             }
 
             if ((err = hlsenc_io_open(s, &vs->out, vs->basename_tmp, &options)) < 0) {
@@ -2601,6 +2608,9 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                             return ret;
                         // init_range_length is set, so nothing retries the init file; a
                         // published segment would carry an EXT-X-MAP nobody can fetch.
+                        // This outlives the packet: every later playlist names the same
+                        // init file, so none of them may be published either.
+                        vs->init_failed = 1;
                         segment_failed = 1;
                     }
                 }
@@ -2703,8 +2713,16 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             double cur_duration =  (double)(pkt->pts - vs->end_pts) * st->time_base.num / st->time_base.den;
             // A segment nobody can fetch does not belong in the playlist, but the timing
             // bookkeeping still has to advance or the next segment inherits its duration.
-            ret = segment_failed ? 0
-                                 : hls_append_segment(s, hls, vs, cur_duration, vs->start_pos, vs->size);
+            if (segment_failed) {
+                // hls_append_segment would have advanced this. Leaving it means the next
+                // segment reuses this name, and a store that already holds the failed
+                // upload's body refuses the new one forever.
+                if (hls->max_seg_size <= 0)
+                    vs->sequence++;
+                ret = 0;
+            } else {
+                ret = hls_append_segment(s, hls, vs, cur_duration, vs->start_pos, vs->size);
+            }
             vs->end_pts = pkt->pts;
             vs->duration = 0;
             if (ret < 0) {
@@ -2714,7 +2732,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
         }
 
         // if we're building a VOD playlist, skip writing the manifest multiple times, and just wait until the end
-        if (!segment_failed && hls->pl_type != PLAYLIST_TYPE_VOD) {
+        if (!segment_failed && !vs->init_failed && hls->pl_type != PLAYLIST_TYPE_VOD) {
             if ((ret = hls_window(s, 0, vs)) < 0) {
                 av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying on a new connection.\n");
                 close_playlist_io(s, vs);
@@ -2875,6 +2893,7 @@ static int hls_write_trailer(struct AVFormatContext *s)
                                "Failed to upload init file '%s': %s\n",
                                vs->base_output_dirname, av_err2str(ret));
                         ff_format_io_close(s, &vs->out);
+                        vs->init_failed = 1;
                         if (!hls->ignore_io_errors) {
                             last_err = ret;
                             segment_failed = 1;
@@ -2966,7 +2985,10 @@ failed:
             ff_format_io_close(s, &vtt_oc->pb);
         }
 
-        if (!segment_failed) {
+        // The playlist only ever names segments that landed, so publishing it stays correct
+        // when this last one did not. With a VOD playlist this is the only place it is
+        // published at all, and skipping it strands every segment that did land.
+        if (!vs->init_failed) {
             ret = hls_window(s, 1, vs);
             if (ret < 0) {
                 av_log(s, AV_LOG_WARNING, "upload playlist failed, retrying on a new connection.\n");
