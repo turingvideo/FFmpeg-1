@@ -127,6 +127,7 @@ typedef struct VariantStream {
     int packets_written;
     int init_range_length;
     int init_failed;
+    int upload_aborted;
     uint8_t *temp_buffer;
     uint8_t *init_buffer;
 
@@ -322,6 +323,10 @@ static int hlsenc_io_close(AVFormatContext *s, AVIOContext **pb, const char *fil
         av_assert0(http_url_context);
         avio_flush(*pb);
         ret = ffurl_shutdown(http_url_context, AVIO_FLAG_WRITE);
+        // The body goes out through the AVIO buffer but the chunked terminator does not,
+        // so a shutdown can succeed over a body that was never fully written.
+        if ((*pb)->error < 0)
+            ret = (*pb)->error;
 #endif
     }
     return ret;
@@ -2454,6 +2459,9 @@ static int hls_init_file_resend(AVFormatContext *s, VariantStream *vs)
         av_log(s, AV_LOG_ERROR, "Failed to resend init file '%s': %s\n",
                hls->fmp4_init_filename, av_err2str(ret));
         ff_format_io_close(s, &vs->out);
+    } else {
+        // The EXT-X-MAP every playlist carries is fetchable again, so let them publish.
+        vs->init_failed = 0;
     }
 
     return ret;
@@ -2611,13 +2619,16 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                                "Failed to upload init file '%s': %s\n",
                                vs->base_output_dirname, av_err2str(ret));
                         ff_format_io_close(s, &vs->out);
-                        if (!hls->ignore_io_errors)
-                            return ret;
                         // init_range_length is set, so nothing retries the init file; a
                         // published segment would carry an EXT-X-MAP nobody can fetch.
                         // This outlives the packet: every later playlist names the same
-                        // init file, so none of them may be published either.
+                        // init file, so none of them may be published either, including
+                        // the one the trailer writes after this call returns.
                         vs->init_failed = 1;
+                        if (!hls->ignore_io_errors) {
+                            vs->upload_aborted = 1;
+                            return ret;
+                        }
                         segment_failed = 1;
                     }
                 }
@@ -2698,8 +2709,13 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                            "Failed to upload segment '%s': %s\n", filename, av_err2str(ret));
                     ff_format_io_close(s, &vs->out);
                     av_freep(&filename);
-                    if (!hls->ignore_io_errors)
+                    if (!hls->ignore_io_errors) {
+                        // The trailer still runs after this returns. It would reuse
+                        // oc->url, whose dynbuf is already gone, and upload a styp-only
+                        // body over the segment this attempt may well have stored.
+                        vs->upload_aborted = 1;
                         return ret;
+                    }
                     // Keep muxing: returning here would drop the keyframe this split is
                     // for and never start the next segment. Just do not publish this one.
                     segment_failed = 1;
@@ -2878,6 +2894,11 @@ static int hls_write_trailer(struct AVFormatContext *s)
         if (!filename) {
             av_freep(&old_filename);
             return AVERROR(ENOMEM);
+        }
+
+        if (vs->upload_aborted) {
+            segment_failed = 1;
+            goto failed;
         }
 
         if (hls->segment_type == SEGMENT_TYPE_FMP4) {

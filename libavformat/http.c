@@ -1936,14 +1936,16 @@ static int http_close(URLContext *h)
     int ret = 0;
     HTTPContext *s = h->priv_data;
 
+    if (s->hd && !s->end_chunked_post)
+        /* Close the write direction by sending the end of chunked encoding. */
+        ret = http_shutdown(h, h->flags);
+
+    // After the shutdown: reading the reply here can parse a Content-Encoding and
+    // reinitialise the stream that was just ended.
 #if CONFIG_ZLIB
     inflateEnd(&s->inflate_stream);
     av_freep(&s->inflate_buffer);
 #endif /* CONFIG_ZLIB */
-
-    if (s->hd && !s->end_chunked_post)
-        /* Close the write direction by sending the end of chunked encoding. */
-        ret = http_shutdown(h, h->flags);
 
     if (s->hd)
         ffurl_closep(&s->hd);
