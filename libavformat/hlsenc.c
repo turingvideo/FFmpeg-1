@@ -296,7 +296,8 @@ static int hlsenc_io_open(AVFormatContext *s, AVIOContext **pb, const char *file
     } else {
         URLContext *http_url_context = ffio_geturlcontext(*pb);
         av_assert0(http_url_context);
-        err = ff_http_do_new_request(http_url_context, filename);
+        err = (*pb)->error < 0 ? (*pb)->error
+                               : ff_http_do_new_request(http_url_context, filename);
         if (err < 0) {
             ff_format_io_close(s, pb);
             av_log(s, AV_LOG_WARNING, "HTTP request reuse failed, retrying on a new connection.\n");
@@ -2629,7 +2630,6 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                             vs->upload_aborted = 1;
                             return ret;
                         }
-                        segment_failed = 1;
                     }
                 }
             }
@@ -2761,6 +2761,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                     // The segment paths above already treat this option as "keep muxing";
                     // killing the run over a manifest upload would contradict them.
                     if (!hls->ignore_io_errors) {
+                        vs->upload_aborted = 1;
                         av_freep(&old_filename);
                         return ret;
                     }
@@ -2772,6 +2773,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
         if (hls->resend_init_file && hls->segment_type == SEGMENT_TYPE_FMP4) {
             ret = hls_init_file_resend(s, vs);
             if (ret < 0) {
+                vs->upload_aborted = 1;
                 av_freep(&old_filename);
                 return ret;
             }
@@ -2896,7 +2898,7 @@ static int hls_write_trailer(struct AVFormatContext *s)
             return AVERROR(ENOMEM);
         }
 
-        if (vs->upload_aborted) {
+        if (vs->upload_aborted && !(hls->flags & HLS_SINGLE_FILE)) {
             segment_failed = 1;
             goto failed;
         }
