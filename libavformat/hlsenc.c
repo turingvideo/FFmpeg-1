@@ -2657,7 +2657,20 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
         }
         if (!byterange_mode) {
             if (vs->vtt_avf) {
-                hlsenc_io_close(s, &vs->vtt_avf->pb, vs->vtt_avf->url);
+                int vtt_ret = hlsenc_io_close(s, &vs->vtt_avf->pb, vs->vtt_avf->url);
+                if (vtt_ret < 0) {
+                    av_log(s, hls->ignore_io_errors ? AV_LOG_WARNING : AV_LOG_ERROR,
+                           "Failed to upload subtitle segment '%s': %s\n",
+                           vs->vtt_avf->url, av_err2str(vtt_ret));
+                    if (!hls->ignore_io_errors) {
+                        vs->upload_aborted = 1;
+                        return vtt_ret;
+                    }
+                    // One entry names both files, so a missing subtitle segment keeps the
+                    // whole entry out of the playlist.
+                    segment_failed = 1;
+                    vs->discontinuity = 1;
+                }
             }
         }
 
@@ -2739,7 +2752,10 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                     }
                     // Keep muxing: returning here would drop the keyframe this split is
                     // for and never start the next segment. Just do not publish this one.
+                    // Its media is still missing from the timeline, so the next segment the
+                    // playlist does carry starts later than the entries before it imply.
                     segment_failed = 1;
+                    vs->discontinuity = 1;
                 }
                 av_freep(&filename);
             }
