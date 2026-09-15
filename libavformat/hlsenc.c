@@ -120,6 +120,7 @@ typedef struct VariantStream {
     unsigned var_stream_idx;
     unsigned number;
     int64_t sequence;
+    int64_t file_sequence;
     const AVOutputFormat *oformat;
     const AVOutputFormat *vtt_oformat;
     AVIOContext *out;
@@ -1107,7 +1108,7 @@ static int sls_flag_use_localtime_filename(AVFormatContext *oc, HLSContext *c, V
     if (c->flags & HLS_SECOND_LEVEL_SEGMENT_INDEX) {
         char *filename = NULL;
         if (replace_int_data_in_filename(&filename,
-            oc->url, 'd', vs->sequence) < 1) {
+            oc->url, 'd', vs->file_sequence) < 1) {
             av_log(c, AV_LOG_ERROR, "Invalid second level segment filename template '%s', "
                     "you can try to remove second_level_segment_index flag\n",
                    oc->url);
@@ -1752,6 +1753,11 @@ static void close_playlist_io(AVFormatContext *s, VariantStream *vs)
     int byterange_mode = (hls->flags & HLS_SINGLE_FILE) || (hls->max_seg_size > 0);
 
     ff_format_io_close(s, byterange_mode ? &hls->m3u8_out : &vs->out);
+    // A persistent close only shuts the stream down, so the subtitle context outlives the
+    // playlist update that failed. Reuse does recover on its own, so this is about dropping
+    // the playlist contexts together rather than leaving one of them to be sorted out by
+    // whoever picks it up next.
+    ff_format_io_close(s, &hls->sub_m3u8_out);
 }
 
 static int hls_start(AVFormatContext *s, VariantStream *vs)
@@ -1764,6 +1770,17 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
     int use_temp_file = 0;
     char iv_string[KEYSIZE*2 + 1];
     int err = 0;
+
+    // Segment names come from their own counter, not from vs->sequence. A segment whose
+    // upload was abandoned does not advance vs->sequence - doing so would renumber the
+    // entries hls_window still lists - so naming from it would hand the next segment the
+    // abandoned one's name with a different body, which a store that keeps what it received
+    // has to reject. vs->sequence still decides the media sequence number and the AES IV.
+    //
+    // Only within one run: append_list rebuilds this counter from the next media sequence,
+    // not from the filename numbers that were consumed. Resuming after a numbering gap may
+    // therefore reuse existing segment names; safe append recovery is not guaranteed.
+    vs->file_sequence = FFMAX(vs->file_sequence, vs->sequence);
 
     if (c->flags & HLS_SINGLE_FILE) {
         char *new_name = av_strdup(vs->basename);
@@ -1779,7 +1796,7 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
     } else if (c->max_seg_size > 0) {
         char *filename = NULL;
         if (replace_int_data_in_filename(&filename,
-            vs->basename, 'd', vs->sequence) < 1) {
+            vs->basename, 'd', vs->file_sequence) < 1) {
                 av_freep(&filename);
                 av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s', you can try to use -strftime 1 with it\n", vs->basename);
                 return AVERROR(EINVAL);
@@ -1818,7 +1835,7 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
         } else {
             char *filename = NULL;
             if (replace_int_data_in_filename(&filename,
-                   vs->basename, 'd', vs->sequence) < 1) {
+                   vs->basename, 'd', vs->file_sequence) < 1) {
                 av_freep(&filename);
                 av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s' you can try to use -strftime 1 with it\n", vs->basename);
                 return AVERROR(EINVAL);
@@ -1828,7 +1845,7 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
         if (vs->vtt_basename) {
             char *filename = NULL;
             if (replace_int_data_in_filename(&filename,
-                vs->vtt_basename, 'd', vs->sequence) < 1) {
+                vs->vtt_basename, 'd', vs->file_sequence) < 1) {
                 av_freep(&filename);
                 av_log(vtt_oc, AV_LOG_ERROR, "Invalid segment filename template '%s'\n", vs->vtt_basename);
                 return AVERROR(EINVAL);
@@ -1836,6 +1853,10 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
             ff_format_set_url(vtt_oc, filename);
        }
     }
+
+    // Consumed once the name is settled, not once the segment succeeds: a name this call
+    // handed out must not come back even if what follows fails.
+    vs->file_sequence++;
 
     proto = avio_find_protocol_name(oc->url);
     use_temp_file = proto && !strcmp(proto, "file") && (c->flags & HLS_TEMP_FILE);
@@ -2739,8 +2760,8 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             // vs->sequence deliberately stays put: hls_window derives EXT-X-MEDIA-SEQUENCE
             // from it minus nb_entries, so advancing it without appending renumbers the
             // entries that are still listed and a reader replays or skips them. The next
-            // segment reuses this number, which is what a retry of an upload nobody
-            // confirmed should do.
+            // segment does not inherit this one's name either - hls_start names from
+            // vs->file_sequence, which moved on when this segment opened.
             ret = segment_failed ? 0
                                  : hls_append_segment(s, hls, vs, cur_duration, vs->start_pos, vs->size);
             vs->end_pts = pkt->pts;
