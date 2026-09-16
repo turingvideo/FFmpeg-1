@@ -3743,7 +3743,8 @@ static int mov_write_mvex_tag(AVIOContext *pb, MOVMuxContext *mov)
     avio_wb32(pb, 0x0); /* size */
     ffio_wfourcc(pb, "mvex");
     for (i = 0; i < mov->nb_streams; i++)
-        mov_write_trex_tag(pb, &mov->tracks[i]);
+        if (mov->tracks[i].par->codec_id != AV_CODEC_ID_TIMED_ID3)
+            mov_write_trex_tag(pb, &mov->tracks[i]);
     return update_size(pb, pos);
 }
 
@@ -4512,6 +4513,8 @@ static int mov_write_moov_tag(AVIOContext *pb, MOVMuxContext *mov,
     if (mov->mode != MODE_MOV && mov->mode != MODE_AVIF && !mov->iods_skip)
         mov_write_iods_tag(pb, mov);
     for (i = 0; i < mov->nb_streams; i++) {
+        if (mov->tracks[i].par->codec_id == AV_CODEC_ID_TIMED_ID3)
+            continue;
         if (mov->tracks[i].entry > 0 || mov->flags & FF_MOV_FLAG_FRAGMENT ||
             mov->mode == MODE_AVIF) {
             int ret = mov_write_trak_tag(s, pb, mov, &(mov->tracks[i]), i < s->nb_streams ? s->streams[i] : NULL);
@@ -5690,6 +5693,62 @@ static int mov_write_squashed_packets(AVFormatContext *s)
     return 0;
 }
 
+static int mov_write_emsgs(AVFormatContext *s)
+{
+    static const char scheme[] = "https://aomedia.org/emsg/ID3";
+    MOVMuxContext *mov = s->priv_data;
+    MOVTrack *video = NULL;
+    int64_t start;
+    int i;
+
+    if (!mov->emsg_queue.head)
+        return 0;
+    for (i = 0; i < mov->nb_streams; i++) {
+        if (mov->tracks[i].par->codec_type == AVMEDIA_TYPE_VIDEO && mov->tracks[i].entry) {
+            video = &mov->tracks[i];
+            break;
+        }
+    }
+    if (!video)
+        return 0;
+    start = video->cluster[0].dts + video->cluster[0].cts;
+    while (mov->emsg_queue.head) {
+        AVPacket *next = &mov->emsg_queue.head->pkt;
+        AVRational time_base = s->streams[next->stream_index]->time_base;
+        AVRational video_time_base = { 1, video->timescale };
+        int64_t pts = av_rescale_q(next->pts, time_base, video_time_base);
+        int64_t duration;
+        AVPacket pkt = { 0 };
+
+        if (pts >= video->end_pts)
+            break;
+        avpriv_packet_list_get(&mov->emsg_queue, &pkt);
+        if (pts < start || pts < video->start_dts) {
+            av_packet_unref(&pkt);
+            continue;
+        }
+        if (mov->emsg_id > UINT32_MAX) {
+            av_packet_unref(&pkt);
+            return AVERROR(ERANGE);
+        }
+        /* MPEG-TS omits duration for the fixed 100 ms metadata blocks. */
+        duration = pkt.duration > 0 ? av_rescale_q(pkt.duration, time_base, video_time_base)
+                                    : video->timescale / 10;
+        avio_wb32(s->pb, 32 + sizeof(scheme) + 1 + pkt.size);
+        ffio_wfourcc(s->pb, "emsg");
+        avio_wb32(s->pb, 1 << 24);
+        avio_wb32(s->pb, video->timescale);
+        avio_wb64(s->pb, pts - video->start_dts);
+        avio_wb32(s->pb, FFMIN(duration, UINT32_MAX));
+        avio_wb32(s->pb, mov->emsg_id++);
+        avio_write(s->pb, scheme, sizeof(scheme));
+        avio_w8(s->pb, 0);
+        avio_write(s->pb, pkt.data, pkt.size);
+        av_packet_unref(&pkt);
+    }
+    return s->pb->error;
+}
+
 static int mov_flush_fragment(AVFormatContext *s, int force)
 {
     MOVMuxContext *mov = s->priv_data;
@@ -5713,6 +5772,8 @@ static int mov_flush_fragment(AVFormatContext *s, int force)
     // tracks may need to be filled in.
     for (i = 0; i < s->nb_streams; i++) {
         MOVTrack *track = &mov->tracks[i];
+        if (track->par->codec_id == AV_CODEC_ID_TIMED_ID3)
+            continue;
         if (!track->end_reliable) {
             const AVPacket *pkt = ff_interleaved_peek(s, i);
             if (pkt) {
@@ -5764,7 +5825,8 @@ static int mov_flush_fragment(AVFormatContext *s, int force)
         int buf_size, moov_size;
 
         for (i = 0; i < mov->nb_streams; i++)
-            if (!mov->tracks[i].entry && !is_cover_image(mov->tracks[i].st))
+            if (!mov->tracks[i].entry && !is_cover_image(mov->tracks[i].st) &&
+                mov->tracks[i].par->codec_id != AV_CODEC_ID_TIMED_ID3)
                 break;
         /* Don't write the initial moov unless all tracks have data */
         if (i < mov->nb_streams && !force)
@@ -5866,6 +5928,8 @@ static int mov_flush_fragment(AVFormatContext *s, int force)
         if (write_moof) {
             avio_write_marker(s->pb, AV_NOPTS_VALUE, AVIO_DATA_MARKER_FLUSH_POINT);
 
+            if ((ret = mov_write_emsgs(s)) < 0)
+                return ret;
             mov_write_moof_tag(s->pb, mov, moof_tracks, mdat_size);
             mov->fragments++;
 
@@ -6410,11 +6474,16 @@ static int mov_write_packet(AVFormatContext *s, AVPacket *pkt)
     MOVTrack *trk;
 
     if (!pkt) {
-        mov_flush_fragment(s, 1);
-        return 1;
+        int ret = mov_flush_fragment(s, 1);
+        return ret < 0 ? ret : 1;
     }
 
     trk = &mov->tracks[pkt->stream_index];
+    if (trk->par->codec_id == AV_CODEC_ID_TIMED_ID3) {
+        if (pkt->pts == AV_NOPTS_VALUE || pkt->size < 10 || memcmp(pkt->data, "ID3", 3))
+            return AVERROR_INVALIDDATA;
+        return avpriv_packet_list_put(&mov->emsg_queue, pkt, av_packet_ref, 0);
+    }
 
     if (is_cover_image(trk->st)) {
         int ret;
@@ -6723,6 +6792,7 @@ static void mov_free(AVFormatContext *s)
     MOVMuxContext *mov = s->priv_data;
     int i;
 
+    avpriv_packet_list_free(&mov->emsg_queue);
     if (!mov->tracks)
         return;
 
@@ -7044,6 +7114,18 @@ static int mov_init(AVFormatContext *s)
 
         track->st  = st;
         track->par = st->codecpar;
+        if (track->par->codec_id == AV_CODEC_ID_TIMED_ID3) {
+            if (mov->mode != MODE_MP4 || !(mov->flags & FF_MOV_FLAG_EMPTY_MOOV) ||
+                mov->flags & (FF_MOV_FLAG_SEPARATE_MOOF | FF_MOV_FLAG_GLOBAL_SIDX) ||
+                av_find_best_stream(s, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0) < 0) {
+                av_log(s, AV_LOG_ERROR, "Timed ID3 requires fragmented MP4 with a video track and empty moov\n");
+                return AVERROR(EINVAL);
+            }
+            track->timescale = st->time_base.den;
+            track->start_dts = track->start_cts = track->end_pts = track->dts_shift = AV_NOPTS_VALUE;
+            track->hint_track = -1;
+            continue;
+        }
         track->language = ff_mov_iso639_to_lang(lang?lang->value:"und", mov->mode!=MODE_MOV);
         if (track->language < 0)
             track->language = 32767;  // Unspecified Macintosh language code

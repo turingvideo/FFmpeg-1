@@ -222,6 +222,8 @@ typedef struct MOVMuxContext {
     AVFormatContext *fc;
 
     AVPacket *pkt;
+    PacketList emsg_queue;
+    uint64_t emsg_id;
 
     int use_editlist;
     float gamma;
